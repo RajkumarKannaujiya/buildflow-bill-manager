@@ -2,9 +2,9 @@ import { BillStatus, PaymentMethod, PrismaClient, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
-const passwordHash = await bcrypt.hash("Demo123!", 12);
 
 async function main() {
+  const passwordHash = await bcrypt.hash("Demo123!", 12);
   const users = [
     ...["Aarav Mehta", "Nisha Patel", "Kabir Sharma"].map((name, i) => ({ name, email: `team1${i + 1}@buildflow.local`, role: Role.TEAM_1, department: "Project operations" })),
     ...["Riya Nair", "Dev Malhotra", "Ishita Rao"].map((name, i) => ({ name, email: `team2${i + 1}@buildflow.local`, role: Role.TEAM_2, department: "Finance & payments" })),
