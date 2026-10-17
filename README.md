@@ -23,7 +23,15 @@ A full-stack construction bill, verification, approval and payment workspace bui
 
 4. Start the application with `pnpm dev` and open `http://localhost:3000`.
 
-For production, set the environment variables in the deployment platform, run `pnpm db:deploy`, and start with `pnpm start`. Configure SMTP to send transactional emails and S3-compatible credentials to use private object storage. Without SMTP, the workflow still records email delivery as skipped in `EmailLog`; in-app notifications work normally. Without S3 settings, files are saved to `private-uploads/`, which must be on persistent private storage and excluded from public web serving.
+## Deploy on Netlify Free
+
+1. In the Netlify project, create a PostgreSQL database from **Data & Storage → Database**. Netlify provides `NETLIFY_DB_URL`; the build script runs Prisma migrations and seeds demo data only when the database is empty.
+2. Add `AUTH_SECRET` and `DATA_ENCRYPTION_KEY` as private Netlify environment variables. Use different random values of at least 32 characters, then redeploy. Never commit these values.
+3. On Netlify, bill and payment documents use the private `buildflow-private-files` Netlify Blobs store. Access continues through the app's authenticated document routes. SMTP is optional; without it, email attempts are logged as skipped and in-app notifications still work.
+
+The Free plan has a hard monthly usage cap and no automatic overage charge; if the cap is reached, the site or database may pause until the next cycle. Free-tier hosting is suitable for a demo and light trial use. Change the seeded demo passwords and users before adding company data. Do not use the public demo credentials for real financial records.
+
+For other hosting platforms, provide `DATABASE_URL`, `AUTH_SECRET`, and `DATA_ENCRYPTION_KEY`. Configure S3-compatible credentials for durable private file storage; without S3/Netlify Blobs, local storage is only suitable for development.
 
 ## Demo accounts
 

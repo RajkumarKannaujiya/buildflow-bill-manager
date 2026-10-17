@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "node scripts/netlify-build.mjs",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "prisma generate",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.840.0",
+    "@netlify/blobs": "^11.1.4",
     "@prisma/client": "^6.10.1",
     "bcryptjs": "^3.0.2",
     "clsx": "^2.1.1",

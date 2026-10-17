@@ -8,8 +8,13 @@ const client = bucket ? new S3Client({ region: process.env.S3_REGION || "auto", 
   forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== "false", credentials: process.env.S3_ACCESS_KEY_ID ? { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "" } : undefined }) : null;
 export async function savePrivateFile(file: File, prefix: "bill" | "payment") {
   const key = `${prefix}/${randomUUID()}${path.extname(file.name).toLowerCase()}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
+  const fileData = await file.arrayBuffer();
+  const bytes = Buffer.from(fileData);
   if (client && bucket) await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: file.type, ServerSideEncryption: "AES256" }));
+  else if (process.env.NETLIFY === "true" || process.env.NETLIFY_SITE_ID) {
+    const { getStore } = await import("@netlify/blobs");
+    await getStore({ name: "buildflow-private-files", consistency: "strong" }).set(key, fileData, { metadata: { contentType: file.type || inferMime(file.name) }, onlyIfNew: true });
+  }
   else {
     const root = path.join(process.cwd(), "private-uploads");
     const target = path.join(root, key);
@@ -24,12 +29,19 @@ export async function readPrivateFile(key: string) {
     if (!response.Body) throw new Error("Object not found");
     return { bytes: Buffer.from(await response.Body.transformToByteArray()), contentType: response.ContentType || "application/octet-stream" };
   }
+  if (process.env.NETLIFY === "true" || process.env.NETLIFY_SITE_ID) {
+    const { getStore } = await import("@netlify/blobs");
+    const entry = await getStore({ name: "buildflow-private-files", consistency: "strong" }).getWithMetadata(key, { type: "arrayBuffer", consistency: "strong" });
+    if (!entry) throw new Error("Object not found");
+    return { bytes: Buffer.from(entry.data), contentType: typeof entry.metadata?.contentType === "string" ? entry.metadata.contentType : inferMime(key) };
+  }
   const safe = key.replace(/\\/g, "/").split("/").filter((p) => p && p !== "." && p !== "..").join(path.sep);
   const full = path.join(process.cwd(), "private-uploads", safe);
   return { bytes: await readFile(full), contentType: inferMime(full) };
 }
 export async function deletePrivateFile(key: string) {
   if (client && bucket) { const { DeleteObjectCommand } = await import("@aws-sdk/client-s3"); await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); return; }
+  if (process.env.NETLIFY === "true" || process.env.NETLIFY_SITE_ID) { const { getStore } = await import("@netlify/blobs"); await getStore({ name: "buildflow-private-files", consistency: "strong" }).delete(key); return; }
   const safe = key.replace(/\\/g, "/").split("/").filter((p) => p && p !== "." && p !== "..").join(path.sep);
   await unlink(path.join(process.cwd(), "private-uploads", safe)).catch(() => undefined);
 }
