@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  TEAM_1
+  TEAM_2
+  ADMIN
+}
+
+enum BillStatus {
+  DRAFT
+  SUBMITTED
+  TEAM_2_REVIEW
+  CORRECTION_REQUIRED
+  ADMIN_PENDING
+  ADMIN_APPROVED
+  ADMIN_REJECTED
+  PAYMENT_PENDING
+  PAID
+  PAYMENT_FAILED
+  CANCELLED
+  DUPLICATE
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  UPI
+  CHEQUE
+  CASH
+  OTHER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  mobile       String?
+  passwordHash String
+  role         Role
+  department   String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  bills        Bill[]   @relation("BillCreator")
+  payments     Payment[]
+  notifications Notification[]
+  auditLogs    AuditLog[]
+  statusEvents BillStatusHistory[]
+}
+
+model Project {
+  id               String   @id @default(cuid())
+  name             String
+  code             String   @unique
+  clientName       String?
+  location         String
+  startDate        DateTime?
+  expectedEndDate  DateTime?
+  status           String   @default("ACTIVE")
+  createdAt        DateTime @default(now())
+  bills            Bill[]
+}
+
+model Vendor {
+  id          String   @id @default(cuid())
+  name        String
+  companyName String?
+  gstin       String?
+  pan         String?
+  mobile      String?
+  email       String?
+  address     String?
+  bankDetails String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  bills       Bill[]
+}
+
+model Bill {
+  id                   String   @id @default(cuid())
+  billNumber           String   @unique
+  vendorId             String
+  projectId            String
+  workCategory         String?
+  description          String
+  billDate             DateTime
+  submissionDate       DateTime @default(now())
+  billAmount           Decimal  @db.Decimal(14, 2)
+  gstAmount            Decimal  @db.Decimal(14, 2)
+  otherCharges         Decimal  @default(0) @db.Decimal(14, 2)
+  totalAmount          Decimal  @db.Decimal(14, 2)
+  vendorContact        String?
+  vendorEmail          String?
+  projectLocation      String?
+  remarks              String?
+  currentStatus        BillStatus @default(DRAFT)
+  createdById          String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  vendor               Vendor   @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy            User     @relation("BillCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  documents            BillDocument[]
+  payment              Payment?
+  history              BillStatusHistory[]
+  auditLogs            AuditLog[]
+
+  @@unique([vendorId, billNumber, projectId], name: "vendor_bill_project_unique")
+  @@index([currentStatus, createdAt])
+  @@index([projectId, vendorId])
+}
+
+model BillDocument {
+  id           String   @id @default(cuid())
+  billId       String
+  kind         String   @default("BILL")
+  storageKey   String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+  bill         Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id                 String   @id @default(cuid())
+  billId             String   @unique
+  paymentDate        DateTime
+  paidAmount         Decimal  @db.Decimal(14, 2)
+  paymentMethod      PaymentMethod
+  bankName           String?
+  utrNumber          String?
+  paymentReference   String?
+  paymentRemarks     String?
+  paymentProofKey    String?
+  paidById           String
+  createdAt          DateTime @default(now())
+  bill               Bill     @relation(fields: [billId], references: [id], onDelete: Restrict)
+  paidBy             User     @relation(fields: [paidById], references: [id], onDelete: Restrict)
+
+  @@index([utrNumber])
+  @@index([paymentReference])
+  @@unique([utrNumber], name: "payment_utr_unique")
+  @@unique([paymentReference], name: "payment_reference_unique")
+}
+
+model BillStatusHistory {
+  id           String     @id @default(cuid())
+  billId       String
+  userId       String
+  previous     BillStatus?
+  next         BillStatus
+  action       String
+  remarks      String?
+  createdAt    DateTime   @default(now())
+  bill         Bill       @relation(fields: [billId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([billId, createdAt])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  billId       String?
+  userId       String
+  userName     String
+  role         Role
+  action       String
+  previous     String?
+  next         String?
+  ipAddress    String?
+  remarks      String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  bill         Bill?    @relation(fields: [billId], references: [id], onDelete: SetNull)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([billId, createdAt])
+  @@index([createdAt])
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  billId     String?
+  title      String
+  message    String
+  href       String?
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, readAt, createdAt])
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  recipient   String
+  subject     String
+  status      String
+  error       String?
+  billId      String?
+  createdAt   DateTime @default(now())
+  @@index([billId, createdAt])
+}
+
+model LoginAttempt {
+  identifier String   @id
+  count      Int      @default(0)
+  expiresAt  DateTime
+  updatedAt  DateTime @updatedAt
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
