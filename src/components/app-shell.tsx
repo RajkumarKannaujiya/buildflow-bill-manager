@@ -165,11 +165,7 @@ function Brand() { return <div className="brand"><span className="brand-mark">B<
 const demoAccounts = [
   { name: "Ananya Kapoor", role: "Admin · Final approval", email: "admin@buildflow.local" },
   { name: "Aarav Mehta", role: "Team 1 · Bill entry", email: "team11@buildflow.local" },
-  { name: "Nisha Patel", role: "Team 1 · Bill entry", email: "team12@buildflow.local" },
-  { name: "Kabir Sharma", role: "Team 1 · Bill entry", email: "team13@buildflow.local" },
   { name: "Riya Nair", role: "Team 2 · Verification & payment", email: "team21@buildflow.local" },
-  { name: "Dev Malhotra", role: "Team 2 · Verification & payment", email: "team22@buildflow.local" },
-  { name: "Ishita Rao", role: "Team 2 · Verification & payment", email: "team23@buildflow.local" },
 ];
 
 function Login({ onLogin }: { onLogin: (user: User) => void }) {
