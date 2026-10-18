@@ -11,6 +11,7 @@ import type { InvoiceSuggestions } from "@/lib/invoice-ocr";
 import { validateGstin } from "@/lib/gstin";
 
 type User = { id: string; name: string; email: string; role: "TEAM_1" | "TEAM_2" | "ADMIN" };
+type Branding = { companyName: string; companyLogoUrl: string };
 type Bill = { id: string; billNumber: string; currentStatus: string; totalAmount: string; billDate: string; createdAt: string; vendor: { id: string; name: string }; project: { id: string; name: string; code?: string }; createdBy?: { id: string; name: string }; payment?: { paidAmount: string; utrNumber?: string | null; paymentReference?: string | null; paidBy?: { id: string; name: string } } | null; history?: Array<{ action: string; userId: string; user: { name: string } }> };
 type Project = { id: string; name: string; code: string; location: string; status: string; _count?: { bills: number } };
 type Vendor = { id: string; name: string; companyName?: string; gstin?: string; gstRegistered?: boolean; mobile?: string; email?: string; active: boolean; _count?: { bills: number } };
@@ -36,6 +37,7 @@ const nav = [
   { id: "settings", label: "Settings", icon: Settings, role: ["ADMIN"], group: "ADMINISTRATION" },
   { id: "audit", label: "Audit log", icon: ScrollText, role: ["ADMIN"], group: "ADMINISTRATION" },
 ];
+const defaultBranding: Branding = { companyName: "J.P. PROJECTS", companyLogoUrl: "/jp-projects-logo.jpeg" };
 let currentCurrency = "INR";
 
 async function api<T = any>(url: string, options?: RequestInit): Promise<T> {
@@ -49,6 +51,7 @@ const shortDate = (value?: string) => value ? new Intl.DateTimeFormat("en-IN", {
 const initials = (value: string) => value.split(/\s+/).slice(0, 2).map((s) => s[0]).join("").toUpperCase();
 const roleLabel = (role: string) => role === "TEAM_1" ? "Bill entry team" : role === "TEAM_2" ? "Verification & payment" : "Administrator";
 const vendorHasGst = (vendor?: Vendor) => vendor?.gstRegistered ?? Boolean(vendor?.gstin);
+const sameLineItems = (left: BillLineItemDraft[], right: BillLineItemDraft[]) => JSON.stringify(left) === JSON.stringify(right);
 function Status({ value }: { value: string }) {
   const css = value === "SUBMITTED" ? "submitted" : ["TEAM_2_REVIEW"].includes(value) ? "review" : ["ADMIN_PENDING"].includes(value) ? "admin" : ["ADMIN_APPROVED"].includes(value) ? "approved" : ["ADMIN_REJECTED"].includes(value) ? "rejected" : ["PAYMENT_PENDING"].includes(value) ? "payment" : value === "PAID" ? "paid" : value === "DUPLICATE" ? "duplicate" : value === "CORRECTION_REQUIRED" ? "correction" : "neutral";
   const label = value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
@@ -58,6 +61,7 @@ function Status({ value }: { value: string }) {
 export default function AppShell() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [branding, setBranding] = useState<Branding>(defaultBranding);
   const [authChecked, setAuthChecked] = useState(false);
   const [active, setActive] = useState("overview");
   const [bills, setBills] = useState<Bill[]>([]);
@@ -90,7 +94,10 @@ export default function AppShell() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { api<{ user: User }>("/api/auth/session").then((r) => { setUser(r.user); return refresh(r.user); }).catch(() => setUser(null)).finally(() => setAuthChecked(true)); }, [refresh]);
+  useEffect(() => {
+    void api<{ branding: Branding }>("/api/branding").then((result) => setBranding({ ...defaultBranding, ...result.branding })).catch(() => undefined);
+    api<{ user: User }>("/api/auth/session").then((r) => { setUser(r.user); return refresh(r.user); }).catch(() => setUser(null)).finally(() => setAuthChecked(true));
+  }, [refresh]);
   useEffect(() => { if (user && reloadKey) void refresh(user); }, [reloadKey, refresh, user]);
   useEffect(() => {
     if (!user) return;
@@ -114,8 +121,8 @@ export default function AppShell() {
     return rows;
   }, [bills, active, search]);
 
-  if (!authChecked) return <div className="login-page"><div className="login-side"><div className="login-card"><Brand /><p className="muted">Loading your secure workspace…</p></div></div></div>;
-  if (!user) return <Login onLogin={(u) => { setUser(u); void refresh(u); }} />;
+  if (!authChecked) return <div className="login-page"><div className="login-side"><div className="login-card"><Brand branding={branding} /><p className="muted">Loading your secure workspace…</p></div></div></div>;
+  if (!user) return <Login branding={branding} onLogin={(u) => { setUser(u); void refresh(u); }} />;
 
   const currentNav = nav.find((item) => item.id === active);
   const titles: Record<string, [string, string]> = {
@@ -130,7 +137,7 @@ export default function AppShell() {
   async function markAllRead() { try { await api("/api/notifications", { method: "POST", body: JSON.stringify({ all: true }) }); setNotifications((n) => n.map((x) => ({ ...x, readAt: x.readAt || new Date().toISOString() }))); setKpis((k) => k ? { ...k, unread: 0 } : k); } catch (e) { showToast((e as Error).message); } }
 
   return <div className="app-layout">
-    <aside className="sidebar"><Brand />
+    <aside className="sidebar"><Brand branding={branding} />
       {Array.from(new Set(nav.filter((item) => !item.role || item.role.includes(user.role)).map((item) => item.group))).map((group) => <div key={group}>
         <div className="nav-label">{group}</div><div className="nav-list">{nav.filter((item) => item.group === group && (!item.role || item.role.includes(user.role))).map((item) => {
           const Icon = item.icon; const count = item.id === "verification" ? kpis?.submitted : item.id === "approval" ? kpis?.pendingAdmin : item.id === "payment" ? kpis?.paymentPending : item.id === "notifications" ? kpis?.unread : 0;
@@ -140,7 +147,7 @@ export default function AppShell() {
       <div className="sidebar-bottom"><div className="help-card"><strong>Need a hand?</strong><p>Reach your finance administrator for workflow or access support.</p></div><div className="user-mini"><div className="avatar">{initials(user.name)}</div><div><div className="user-mini-name">{user.name}</div><div className="user-mini-role">{roleLabel(user.role)}</div></div></div></div>
     </aside>
     <div className="main-area">
-      <header className="topbar"><div className="mobile-brand"><span className="brand-mark">B</span> BuildFlow</div><label className="global-search"><Search /><input placeholder="Search bills, vendors, projects, UTR…" value={search} onChange={(e) => setSearch(e.target.value)} /><kbd>⌘ K</kbd></label>
+      <header className="topbar"><div className="mobile-brand"><span className="mobile-logo"><img src={branding.companyLogoUrl || defaultBranding.companyLogoUrl} alt="" /></span>{branding.companyName}</div><label className="global-search"><Search /><input placeholder="Search bills, vendors, projects, UTR…" value={search} onChange={(e) => setSearch(e.target.value)} /><kbd>⌘ K</kbd></label>
         <div className="topbar-right"><div style={{ position: "relative" }}><button className="icon-button" aria-label="Notifications" onClick={() => setBellOpen((v) => !v)}><Bell />{(kpis?.unread || 0) > 0 && <span className="badge-dot" />}</button>{bellOpen && <NotificationDropdown notifications={notifications} markAllRead={markAllRead} go={(href) => { setBellOpen(false); href && router.push(href); }} />}</div><div className="top-user"><div className="avatar">{initials(user.name)}</div><div className="top-user-copy"><div className="top-user-name">{user.name}</div><div className="top-user-role">{roleLabel(user.role)}</div></div><button aria-label="Log out" className="icon-button" onClick={logout}><LogOut /></button></div></div>
       </header>
       <main className="content">
@@ -153,7 +160,7 @@ export default function AppShell() {
         {active === "reports" && <ReportsView projects={projects} />}
         {active === "notifications" && <NotificationsView notifications={notifications} markAllRead={markAllRead} />}
         {active === "users" && <UsersView users={users} showToast={showToast} refresh={() => setReloadKey((n) => n + 1)} />}
-        {active === "settings" && settings && <SettingsView settings={settings} setSettings={setSettings} showToast={showToast} />}
+        {active === "settings" && settings && <SettingsView settings={settings} setSettings={setSettings} showToast={showToast} onBrandingChange={setBranding} />}
         {active === "audit" && <AuditView logs={audit} />}
       </main>
     </div>
@@ -162,7 +169,7 @@ export default function AppShell() {
   </div>;
 }
 
-function Brand() { return <div className="brand"><span className="brand-mark">B</span><div><span className="brand-name">BuildFlow</span><span className="brand-sub">BILL MANAGEMENT</span></div></div>; }
+function Brand({ branding }: { branding: Branding }) { return <div className="brand"><span className="brand-logo-window"><img src={branding.companyLogoUrl || defaultBranding.companyLogoUrl} alt={`${branding.companyName || defaultBranding.companyName} logo`} /></span><div><span className="brand-name">{branding.companyName || defaultBranding.companyName}</span><span className="brand-sub">BILL MANAGEMENT</span></div></div>; }
 
 const demoAccounts = [
   { name: "Ananya Kapoor", role: "Admin · Final approval", email: "admin@buildflow.local" },
@@ -170,10 +177,10 @@ const demoAccounts = [
   { name: "Riya Nair", role: "Team 2 · Verification & payment", email: "team21@buildflow.local" },
 ];
 
-function Login({ onLogin }: { onLogin: (user: User) => void }) {
+function Login({ onLogin, branding }: { onLogin: (user: User) => void; branding: Branding }) {
   const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
   async function submit(event: React.FormEvent) { event.preventDefault(); setPending(true); setError(""); try { const result = await api<{ user: User }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase(), password }) }); onLogin(result.user); } catch (e) { setError((e as Error).message); } finally { setPending(false); } }
-  return <div className="login-page"><section className="login-art"><Brand /><div className="login-art-copy"><p className="eyebrow" style={{ color: "#b9d781" }}>A CLEARER WAY TO BUILD</p><h1>Every bill,<br />accounted for.</h1><p>One dependable place to verify construction bills, keep approvals moving, and make every payment traceable.</p></div><div className="login-foot">© 2026 BuildFlow Construction · Finance workspace</div></section><section className="login-side"><form className="login-card" onSubmit={submit}><Brand /><p className="eyebrow">SECURE WORKSPACE</p><h2>Welcome back</h2><p className="intro">Sign in with the work email and initial password provided by your administrator.</p>{error && <div className="alert error">{error}</div>}<div className="field"><label>Work email</label><input type="email" autoComplete="username" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></div><div className="field"><label>Password</label><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div><button className="button primary" disabled={pending}>{pending ? "Signing in…" : "Sign in securely"}</button><p className="field-hint">If you don’t have your initial password or can’t sign in, contact your administrator.</p><section className="demo-accounts" aria-label="Demo login credentials"><div className="demo-accounts-head"><div><strong>Demo login credentials</strong><span>Shared demo password: <code>Demo123!</code></span></div><span className="demo-badge">DEMO ONLY</span></div><p className="demo-warning">Public demo access: anyone can sign in and change demo records. Never use these accounts for company or financial data.</p><div className="demo-account-list">{demoAccounts.map((account) => <div className="demo-account-row" key={account.email}><div className="demo-account-copy"><strong>{account.role}</strong><span>{account.name} · {account.email}</span></div><button className="button small" type="button" onClick={() => { setEmail(account.email); setPassword("Demo123!"); setError(""); }}>Use</button></div>)}</div></section></form></section></div>;
+  return <div className="login-page"><section className="login-art"><Brand branding={branding} /><div className="login-art-copy"><p className="eyebrow" style={{ color: "#f1a552" }}>PROJECT FINANCE WORKSPACE</p><h1>Every project bill,<br />clearly accounted for.</h1><p>Review materials, track approvals and keep each project payment documented in one place.</p></div><div className="login-foot">© 2026 {branding.companyName} · Finance workspace</div></section><section className="login-side"><form className="login-card" onSubmit={submit}><Brand branding={branding} /><p className="eyebrow">SECURE WORKSPACE</p><h2>Welcome back</h2><p className="intro">Sign in with the work email and initial password provided by your administrator.</p>{error && <div className="alert error">{error}</div>}<div className="field"><label>Work email</label><input type="email" autoComplete="username" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></div><div className="field"><label>Password</label><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div><button className="button primary" disabled={pending}>{pending ? "Signing in…" : "Sign in securely"}</button><p className="field-hint">If you don’t have your initial password or can’t sign in, contact your administrator.</p><section className="demo-accounts" aria-label="Demo login credentials"><div className="demo-accounts-head"><div><strong>Demo login credentials</strong><span>Shared demo password: <code>Demo123!</code></span></div><span className="demo-badge">DEMO ONLY</span></div><p className="demo-warning">Public demo access: anyone can sign in and change demo records. Never use these accounts for company or financial data.</p><div className="demo-account-list">{demoAccounts.map((account) => <div className="demo-account-row" key={account.email}><div className="demo-account-copy"><strong>{account.role}</strong><span>{account.name} · {account.email}</span></div><button className="button small" type="button" onClick={() => { setEmail(account.email); setPassword("Demo123!"); setError(""); }}>Use</button></div>)}</div></section></form></section></div>;
 }
 
 function Overview({ kpis, bills, projects, user, setView }: { kpis: Kpis | null; bills: Bill[]; projects: Project[]; user: User; setView: (v: string) => void }) {
@@ -213,6 +220,7 @@ function stageLabel(status: string) { if (["SUBMITTED", "TEAM_2_REVIEW"].include
 function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { projects: Project[]; vendors: Vendor[]; user: User; showToast: (m: string) => void; onDone: (id: string) => void; onCancel: () => void }) {
   const [form, setForm] = useState({ billNumber: "", vendorId: "", projectId: "", vendorContact: "", vendorEmail: "", projectLocation: "", workCategory: "", description: "", billDate: new Date().toISOString().slice(0, 10), billAmount: "", gstAmount: "0", otherCharges: "0", remarks: "" });
   const [lineItems, setLineItems] = useState<BillLineItemDraft[]>([{ description: "", quantity: "1", unit: "nos", rate: "" }]);
+  const [autoFilledLineItems, setAutoFilledLineItems] = useState<BillLineItemDraft[] | null>(null), [originalLineItems, setOriginalLineItems] = useState<BillLineItemDraft[] | null>(null);
   const [file, setFile] = useState<File | null>(null), [pending, setPending] = useState(false), [duplicate, setDuplicate] = useState<any>(null), [duplicateLoading, setDuplicateLoading] = useState(false), [error, setError] = useState("");
   const [editedFields, setEditedFields] = useState<Set<string>>(new Set()), [detectedGstin, setDetectedGstin] = useState("");
   const [autoFilledValues, setAutoFilledValues] = useState<AutoBillFields>({}), [autoFilledOriginals, setAutoFilledOriginals] = useState<AutoBillFields>({});
@@ -233,6 +241,10 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
       ...(key === "projectId" ? { projectLocation: projects.find((item) => item.id === value)?.location || "" } : {}),
     }));
   }
+  function changeLineItems(items: BillLineItemDraft[]) {
+    setEditedFields((current) => new Set(current).add("lineItems"));
+    setLineItems(items);
+  }
   function applyInvoiceSuggestions(fields: InvoiceSuggestions) {
     if (!Object.keys(fields).length) {
       setDetectedGstin("");
@@ -243,8 +255,11 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
         }
         return restored;
       });
+      if (autoFilledLineItems && originalLineItems && sameLineItems(lineItems, autoFilledLineItems)) setLineItems(originalLineItems);
       setAutoFilledValues({});
       setAutoFilledOriginals({});
+      setAutoFilledLineItems(null);
+      setOriginalLineItems(null);
       return;
     }
     setDetectedGstin(fields.gstin || "");
@@ -264,6 +279,12 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
     });
     setAutoFilledValues((current) => ({ ...current, ...values }));
     setForm((current) => ({ ...current, ...values }));
+    if (fields.lineItems?.length && !editedFields.has("lineItems")) {
+      const suggested = fields.lineItems.map((item) => ({ ...item }));
+      setOriginalLineItems((current) => current || lineItems.map((item) => ({ ...item })));
+      setAutoFilledLineItems(suggested);
+      setLineItems(suggested);
+    }
   }
   async function submit(e: React.FormEvent) { e.preventDefault(); const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null; const intent = submitter?.value === "draft" ? "draft" : "submit"; const enteredItems = lineItems.filter((item) => item.description.trim() || item.rate.trim()); if (enteredItems.some((item) => !item.description.trim() || !item.quantity || Number(item.quantity) <= 0 || !item.unit.trim() || item.rate === "" || Number(item.rate) < 0)) { setError("Complete or remove each material/work row before saving."); return; } if (intent === "submit" && !enteredItems.length) { setError("Add at least one material or work item before submitting."); return; } if (intent === "submit" && !file) { setError("Please upload the bill document."); return; } const savedBillAmount = enteredItems.length ? billLineSubtotal(enteredItems).toFixed(2) : form.billAmount; if (intent === "submit" && Number(savedBillAmount) <= 0) { setError("Material/work items must have a bill amount greater than zero."); return; } setPending(true); setError(""); try { const data = new FormData(); Object.entries({ ...form, billAmount: savedBillAmount, gstAmount }).forEach(([k, v]) => data.append(k, v)); data.append("lineItems", JSON.stringify(enteredItems)); data.append("intent", intent); if (file) data.append("document", file); const result = await api<{ bill: Bill }>("/api/bills", { method: "POST", body: data }); showToast(intent === "draft" ? "Draft saved." : "Bill submitted to Team 2 for verification."); onDone(result.bill.id); } catch (e) { const msg = (e as Error).message; setError(msg); showToast(msg); } finally { setPending(false); } }
   const alreadyPaid = duplicate?.isPaid;
@@ -284,7 +305,7 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
       <Field label="Description" className="full"><textarea required value={form.description} onChange={(e) => change("description", e.target.value)} placeholder="Describe the work completed or materials supplied" /></Field>
     </div>
     <div className="form-section-title"><span>2</span> Material and work details</div>
-    <BillLineItemsEditor items={lineItems} onChange={setLineItems} />
+    <BillLineItemsEditor items={lineItems} onChange={changeLineItems} />
     <div className="form-section-title"><span>3</span> Bill amount and documents</div>
     <div className="form-grid">
       <Field label="Bill amount / item subtotal (₹) *"><input required type="number" min="0.01" step="0.01" value={billAmount} readOnly={hasStartedItems} onChange={(e) => change("billAmount", e.target.value)} /></Field>
@@ -333,10 +354,10 @@ function UsersView({ users, showToast, refresh }: { users: any[]; showToast: (m:
   return <><section className="panel table-panel"><div className="panel-head"><div><h2 className="panel-title">Authorized users</h2><p className="panel-caption">Assign the minimum role needed for each responsibility.</p></div><div className="spacer" /><button className="button primary" onClick={() => setOpen(true)}><Plus /> Add user</button></div><div className="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>Department</th><th>Role</th><th>Access</th><th /></tr></thead><tbody>{users.map((u) => <tr key={u.id}><td className="vendor-name">{u.name}</td><td>{u.email}</td><td>{u.mobile || "—"}</td><td>{u.department || "—"}</td><td>{roleLabel(u.role)}</td><td><span className={`status ${u.active ? "paid" : "neutral"}`}>{u.active ? "Active" : "Inactive"}</span></td><td><button className="button small" onClick={() => void toggleUser(u)}>{u.active ? "Deactivate" : "Activate"}</button></td></tr>)}</tbody></table></div></section>{open && <Modal title="Add a user" close={() => setOpen(false)}><form className="stack" onSubmit={submit}><Field label="Full name *"><input name="name" required /></Field><Field label="Email *"><input name="email" type="email" required /></Field><div className="form-grid" style={{ marginBottom: 0 }}><Field label="Mobile"><input name="mobile" /></Field><Field label="Department"><input name="department" /></Field></div><Field label="Role *"><select name="role" required><option value="TEAM_1">Team 1 · Bill entry</option><option value="TEAM_2">Team 2 · Verification & payment</option><option value="ADMIN">Admin · Final approval</option></select></Field><Field label="Initial password *"><input name="password" type="password" minLength={12} required /><span className="field-hint">Use at least 12 characters; share this through your company’s secure channel.</span></Field><div style={{ display: "flex", justifyContent: "flex-end" }}><button className="button primary" disabled={pending}>Create account</button></div></form></Modal>}</>;
 }
 
-function SettingsView({ settings, setSettings, showToast }: { settings: SettingsData; setSettings: (s: SettingsData) => void; showToast: (m: string) => void }) {
+function SettingsView({ settings, setSettings, showToast, onBrandingChange }: { settings: SettingsData; setSettings: (s: SettingsData) => void; showToast: (m: string) => void; onBrandingChange: (branding: Branding) => void }) {
   const [pending, setPending] = useState(false);
-  async function save(e: React.FormEvent) { e.preventDefault(); setPending(true); try { const result = await api<{ settings: SettingsData }>("/api/settings", { method: "PUT", body: JSON.stringify(settings) }); setSettings(result.settings); showToast("Company settings saved."); } catch (err) { showToast((err as Error).message); } finally { setPending(false); } }
-  return <form className="form-card" onSubmit={save}><div className="form-section-title"><span>1</span> Company and billing defaults</div><div className="form-grid"><Field label="Company name"><input value={settings.companyName} onChange={(e) => setSettings({ ...settings, companyName: e.target.value })} required /></Field><Field label="Support email"><input type="email" value={settings.supportEmail} onChange={(e) => setSettings({ ...settings, supportEmail: e.target.value })} required /></Field><Field label="Company logo URL"><input type="url" value={settings.companyLogoUrl || ""} onChange={(e) => setSettings({ ...settings, companyLogoUrl: e.target.value })} placeholder="https://…" /><span className="field-hint">Shown in workflow emails.</span></Field><Field label="Currency"><select value={settings.currency} onChange={(e) => setSettings({ ...settings, currency: e.target.value })}><option value="INR">INR · Indian Rupee</option><option value="USD">USD · US Dollar</option></select></Field><Field label="Bill number format"><input value={settings.billNumberFormat} onChange={(e) => setSettings({ ...settings, billNumberFormat: e.target.value })} /></Field></div><div className="form-section-title"><span>2</span> Workflow options</div><div className="stack" style={{ padding: "0 2px 18px" }}><label style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={settings.gstEnabled} onChange={(e) => setSettings({ ...settings, gstEnabled: e.target.checked })} /> Enable GST fields for submitted bills</label><label style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={settings.notificationsEnabled} onChange={(e) => setSettings({ ...settings, notificationsEnabled: e.target.checked })} /> Enable email and in-app notifications</label><p className="field-hint">SMTP and object storage credentials are set in the server environment file.</p></div><button className="button primary" disabled={pending}>{pending ? "Saving…" : "Save settings"}</button></form>;
+  async function save(e: React.FormEvent) { e.preventDefault(); setPending(true); try { const result = await api<{ settings: SettingsData }>("/api/settings", { method: "PUT", body: JSON.stringify(settings) }); setSettings(result.settings); onBrandingChange({ companyName: result.settings.companyName, companyLogoUrl: result.settings.companyLogoUrl || defaultBranding.companyLogoUrl }); showToast("Company settings saved."); } catch (err) { showToast((err as Error).message); } finally { setPending(false); } }
+  return <form className="form-card" onSubmit={save}><div className="form-section-title"><span>1</span> Company and billing defaults</div><div className="form-grid"><Field label="Company name"><input value={settings.companyName} onChange={(e) => setSettings({ ...settings, companyName: e.target.value })} required /></Field><Field label="Support email"><input type="email" value={settings.supportEmail} onChange={(e) => setSettings({ ...settings, supportEmail: e.target.value })} required /></Field><Field label="Company logo path or URL"><input type="text" value={settings.companyLogoUrl || ""} onChange={(e) => setSettings({ ...settings, companyLogoUrl: e.target.value })} placeholder="/jp-projects-logo.jpeg or https://…" /><span className="field-hint">Shown in the workspace and workflow emails.</span></Field><Field label="Currency"><select value={settings.currency} onChange={(e) => setSettings({ ...settings, currency: e.target.value })}><option value="INR">INR · Indian Rupee</option><option value="USD">USD · US Dollar</option></select></Field><Field label="Bill number format"><input value={settings.billNumberFormat} onChange={(e) => setSettings({ ...settings, billNumberFormat: e.target.value })} /></Field></div><div className="form-section-title"><span>2</span> Workflow options</div><div className="stack" style={{ padding: "0 2px 18px" }}><label style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={settings.gstEnabled} onChange={(e) => setSettings({ ...settings, gstEnabled: e.target.checked })} /> Enable GST fields for submitted bills</label><label style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={settings.notificationsEnabled} onChange={(e) => setSettings({ ...settings, notificationsEnabled: e.target.checked })} /> Enable email and in-app notifications</label><p className="field-hint">SMTP and object storage credentials are set in the server environment file.</p></div><button className="button primary" disabled={pending}>{pending ? "Saving…" : "Save settings"}</button></form>;
 }
 
 function AuditView({ logs }: { logs: Audit[] }) { return <section className="panel table-panel"><div className="panel-head"><div><h2 className="panel-title">Immutable activity history</h2><p className="panel-caption">Audit entries are append-only and cannot be edited or deleted through the app.</p></div></div><div className="table-wrap"><table><thead><tr><th>Time</th><th>Bill</th><th>Action</th><th>User</th><th>Role</th><th>Status change</th><th>Remarks</th><th>IP</th></tr></thead><tbody>{logs.map((l) => <tr key={l.id}><td>{new Date(l.createdAt).toLocaleString("en-IN")}</td><td>{l.bill?.billNumber || "—"}</td><td className="bill-number">{l.action.replaceAll("_", " ")}</td><td>{l.userName}</td><td>{l.role.replaceAll("_", " ")}</td><td>{l.previous ? `${l.previous} → ${l.next || "—"}` : l.next || "—"}</td><td style={{ maxWidth: 220, whiteSpace: "normal" }}>{l.remarks || "—"}</td><td>{l.ipAddress || "—"}</td></tr>)}</tbody></table>{!logs.length && <div className="empty">No audit events yet.</div>}</div></section>; }

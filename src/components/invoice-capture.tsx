@@ -63,11 +63,12 @@ export function InvoiceCapture({ file, onFile, onExtract }: Props) {
   const foundLabels = [
     ["billNumber", "Bill number"], ["billDate", "Bill date"], ["billAmount", "Bill amount"], ["gstAmount", "GST amount"],
   ].filter(([key]) => Boolean(suggestions[key as keyof InvoiceSuggestions]));
+  if (suggestions.lineItems?.length) foundLabels.push(["lineItems", `Material / work · ${suggestions.lineItems.length} rows`]);
 
   return <section className="invoice-capture" aria-label="Smart invoice capture">
     <div className="capture-heading">
       <div className="capture-icon"><Sparkles size={16} /></div>
-      <div className="capture-heading-copy"><strong>Bill document * · Smart capture</strong><span>Read a PDF or image and suggest bill fields automatically.</span></div>
+      <div className="capture-heading-copy"><strong>Bill document * · Smart capture</strong><span>Read invoice details and item-wise materials/work from a PDF or image.</span></div>
       <span className="capture-private"><ScanText size={13} /> Private browser-side scan</span>
     </div>
     <label className={`upload-zone ${dragging ? "dragging" : ""}`} htmlFor={inputId} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void selectFile(event.dataTransfer.files[0] || null); }}>
@@ -86,6 +87,6 @@ export function InvoiceCapture({ file, onFile, onExtract }: Props) {
       <div className="capture-chips">{foundLabels.map(([key, label]) => <span key={key}>{label}</span>)}</div>
       {suggestions.gstin && <GstinStatus value={suggestions.gstin} />}
     </div>}
-    <p className="capture-footnote">The scan runs on this device; the required document is uploaded only when you save the bill. OCR suggestions may be wrong, so review the amounts and GSTIN.</p>
+    <p className="capture-footnote">The scan runs on this device; the required document is uploaded only when you save the bill. Review the extracted material rows, quantities, rates, bill total and GSTIN against the original invoice before submitting.</p>
   </section>;
 }

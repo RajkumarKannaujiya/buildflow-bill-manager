@@ -65,12 +65,12 @@ async function main() {
   if (existingPaid && !await db.auditLog.findFirst({ where: { action: "DUPLICATE_ATTEMPT", billId: existingPaid.id } })) {
     await db.auditLog.create({ data: { billId: existingPaid.id, userId: team1[0].id, userName: team1[0].name, role: Role.TEAM_1, action: "DUPLICATE_ATTEMPT", previous: BillStatus.PAID, next: "DUPLICATE", remarks: "Demo duplicate submission attempt blocked by paid-bill check." } });
   }
-  for (const [key, value] of Object.entries({ companyName: "BuildFlow Construction", companyLogoUrl: "", supportEmail: "finance@buildflow.local", currency: "INR", billNumberFormat: "BL-{YYYY}-{####}", gstEnabled: true, notificationsEnabled: true })) {
+  for (const [key, value] of Object.entries({ companyName: "J.P. PROJECTS", companyLogoUrl: "/jp-projects-logo.jpeg", supportEmail: "finance@buildflow.local", currency: "INR", billNumberFormat: "BL-{YYYY}-{####}", gstEnabled: true, notificationsEnabled: true })) {
     await db.setting.upsert({ where: { key }, create: { key, value }, update: {} });
   }
   for (const user of userRows) {
     const count = await db.notification.count({ where: { userId: user.id } });
-    if (!count) await db.notification.create({ data: { userId: user.id, title: "Welcome to BuildFlow", message: `Your ${user.role.replaceAll("_", " ")} workspace is ready.`, href: "/" } });
+    if (!count) await db.notification.create({ data: { userId: user.id, title: "Welcome to J.P. PROJECTS", message: `Your ${user.role.replaceAll("_", " ")} workspace is ready.`, href: "/" } });
   }
   console.log("Seeded 7 users, 5 projects, 10 vendors and up to 20 demo bills.");
   console.log("Demo password for all accounts: Demo123!");

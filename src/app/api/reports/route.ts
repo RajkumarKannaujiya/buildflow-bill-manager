@@ -64,7 +64,7 @@ async function buildPdf(rows: Array<Array<string>>) {
     const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 32 });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk)); doc.on("end", () => resolve(Buffer.concat(chunks))); doc.on("error", reject);
-    doc.fontSize(18).fillColor("#17443d").text("BuildFlow · Bill report"); doc.moveDown(0.4).fontSize(8).fillColor("#64748b").text(`Generated ${new Date().toLocaleString("en-IN")} · ${rows.length} bills`); doc.moveDown();
+    doc.fontSize(18).fillColor("#173958").text("J.P. PROJECTS · Bill report"); doc.moveDown(0.4).fontSize(8).fillColor("#64748b").text(`Generated ${new Date().toLocaleString("en-IN")} · ${rows.length} bills`); doc.moveDown();
     const visible = [0, 1, 2, 3, 4, 5, 10, 11, 12, 14];
     const headers = visible.map((i) => columns[i]);
     const widths = [56, 78, 96, 54, 60, 136, 66, 58, 64, 62];

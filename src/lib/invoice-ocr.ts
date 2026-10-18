@@ -6,7 +6,10 @@ export type InvoiceSuggestions = {
   gstin?: string;
   billAmount?: string;
   gstAmount?: string;
+  lineItems?: InvoiceLineItemSuggestion[];
 };
+
+export type InvoiceLineItemSuggestion = { description: string; quantity: string; unit: string; rate: string };
 
 export type OcrProgress = (progress: number, message: string) => void;
 
@@ -22,7 +25,15 @@ export async function readInvoiceText(file: File, onProgress: OcrProgress): Prom
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const content = await page.getTextContent();
-      textPages.push(content.items.map((item) => "str" in item ? item.str : "").join(" "));
+      const fragments = content.items.filter((item): item is typeof item & { str: string; transform: number[] } => "str" in item && Boolean(item.str.trim()));
+      const rows: Array<{ y: number; fragments: Array<{ x: number; text: string }> }> = [];
+      for (const item of fragments) {
+        const x = item.transform[4] || 0, y = Math.round((item.transform[5] || 0) * 2) / 2;
+        let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 2);
+        if (!row) { row = { y, fragments: [] }; rows.push(row); }
+        row.fragments.push({ x, text: item.str });
+      }
+      textPages.push(rows.sort((a, b) => b.y - a.y).map((row) => row.fragments.sort((a, b) => a.x - b.x).map((fragment) => fragment.text).join(" ")).join("\n"));
       onProgress(0.08 + 0.12 * (pageNumber / pageCount), `Reading page ${pageNumber} of ${pageCount}`);
     }
     const embeddedText = textPages.join("\n");
@@ -103,7 +114,72 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   const billAmount = taxable ?? (grandTotal !== undefined && gst !== undefined ? grandTotal - gst : grandTotal);
   if (billAmount !== undefined && billAmount > 0) result.billAmount = billAmount.toFixed(2);
   if (gst !== undefined && gst >= 0) result.gstAmount = gst.toFixed(2);
+  const lineItems = extractInvoiceLineItems(lines);
+  if (lineItems.length) result.lineItems = lineItems;
   return result;
+}
+
+function extractInvoiceLineItems(lines: string[]): InvoiceLineItemSuggestion[] {
+  const headerIndex = lines.findIndex((line) => /(?:description|particulars|material|item|product|service|work)\b/i.test(line) && /(?:qty|quantity|rate|unit price|amount|value|total)\b/i.test(line));
+  const tableLines = headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines;
+  const hasHsnColumn = headerIndex >= 0 && /\bhsn\b|\bsac\b/i.test(lines[headerIndex]);
+  const result: InvoiceLineItemSuggestion[] = [];
+  const seen = new Set<string>();
+  for (const line of tableLines) {
+    if (/^(?:sub\s*total|subtotal|taxable\s+(?:value|amount)|cgst|sgst|igst|total\s+(?:gst|tax|amount|value)|grand\s+total|amount\s+(?:due|payable)|net\s+payable|round\s*off|balance\s+due|terms\s+and\s+conditions|bank\s+details)\b/i.test(line)) break;
+    if (/(?:description|particulars|material|item|product|service|work)\b/i.test(line) && /(?:qty|quantity|rate|unit price|amount|value|hsn|sac)\b/i.test(line)) continue;
+
+    const numberPattern = /(?<![a-z])(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.(\d{1,3}))?(?![a-z])/gi;
+    const tokens: Array<{ value: number; digits: string; decimals: string; start: number; end: number }> = [];
+    for (const match of line.matchAll(numberPattern)) {
+      const digits = match[1].replace(/,/g, ""), decimals = match[2] || "";
+      const value = Number(`${digits}${decimals ? `.${decimals}` : ""}`);
+      if (Number.isFinite(value) && value <= 1_000_000_000) tokens.push({ value, digits, decimals, start: match.index || 0, end: (match.index || 0) + match[0].length });
+    }
+    if (tokens.length < 2) continue;
+
+    const ignored = new Set<number>();
+    const first = tokens[0];
+    if (tokens.length >= 3 && first.start <= 2 && first.value <= 999 && /^\s*\d{1,3}[.)]?\s+/.test(line)) ignored.add(0);
+    if ((hasHsnColumn || tokens.length >= 5) && tokens.length - ignored.size >= 3) {
+      const hsnIndex = tokens.findIndex((token, index) => !ignored.has(index) && token.start < tokens[tokens.length - 2].start && !token.decimals && token.digits.length >= 4 && token.digits.length <= 8);
+      if (hsnIndex >= 0) ignored.add(hsnIndex);
+    }
+    const usable = tokens.filter((_, index) => !ignored.has(index));
+    if (usable.length < 2) continue;
+    const amountToken = usable[usable.length - 1];
+    const hasRate = usable.length >= 3;
+    const quantityToken = usable[usable.length - (hasRate ? 3 : 2)];
+    const rateToken = hasRate ? usable[usable.length - 2] : undefined;
+    const quantity = quantityToken.value;
+    const amount = amountToken.value;
+    if (quantity <= 0 || amount <= 0) continue;
+
+    let description = line.slice(0, quantityToken.start).replace(/^\s*\d{1,3}[.)]?\s+/, "").trim();
+    for (const index of ignored) {
+      const token = tokens[index];
+      if (token.start < quantityToken.start && token.digits.length >= 4) description = description.replace(new RegExp(`(?<![a-z])${token.digits}(?![a-z])`, "i"), " ");
+    }
+    description = description.replace(/[|:;\-–]+$/g, "").replace(/\s+/g, " ").trim();
+    if (description.length < 3 || !/[a-z]{2}/i.test(description) || /^(?:invoice|bill|date|gstin|pan|email|phone|mobile|address|vendor|supplier|customer|buyer|consignee|ship\s+to|bill\s+to)\b/i.test(description)) continue;
+
+    const between = line.slice(quantityToken.end, (rateToken || amountToken).start);
+    const unitMatch = between.match(/\b(nos?|pieces?|pcs?|sets?|bags?|kg|kgs|gms?|grams?|litres?|liters?|ltr|ltrs|mt|tonnes?|tons?|cft|m3|m\s*[³3]|cum|sq\.?\s*m|sqm|sq\.?\s*ft|sqft|sft|rmt|rft|running\s*(?:ft|feet|m)|feet|ft|metres?|meters?|mtrs?|rolls?|boxes|box|trips?|loads?|days?|hours?|hrs?|units?|lot)\b/i);
+    if (headerIndex < 0 && !unitMatch && usable.length < 3) continue;
+    const unit = normalizeInvoiceUnit(unitMatch?.[0] || "nos");
+    const rate = rateToken ? rateToken.value : amount / quantity;
+    const draft = { description: description.slice(0, 500), quantity: quantity.toFixed(Math.min(3, quantityToken.decimals.length)), unit, rate: rate.toFixed(2) };
+    const key = `${draft.description.toLowerCase()}|${draft.quantity}|${draft.rate}`;
+    if (!seen.has(key)) { result.push(draft); seen.add(key); }
+    if (result.length >= 100) break;
+  }
+  return result;
+}
+
+function normalizeInvoiceUnit(value: string) {
+  const normalized = value.toLowerCase().replace(/\s+/g, "").replace(/sq\.?/g, "sq");
+  const aliases: Record<string, string> = { no: "nos", pc: "pcs", piece: "pcs", pieces: "pcs", kg: "kg", kgs: "kg", gm: "g", gms: "g", gram: "g", grams: "g", ltr: "ltr", ltrs: "ltr", litre: "ltr", liter: "ltr", litres: "ltr", liters: "ltr", tonne: "tonne", tonnes: "tonne", ton: "tonne", tons: "tonne", mt: "tonne", m3: "m³", "m³": "m³", cum: "m³", cft: "ft³", sqft: "sqft", sft: "sqft", sqm: "sqm", rmt: "m", rft: "rft", metre: "m", metres: "m", meter: "m", meters: "m", mtr: "m", mtrs: "m", hr: "hrs", hour: "hrs", hours: "hrs", hrs: "hrs", unit: "units", units: "units", trip: "trips", trips: "trips", load: "loads", loads: "loads" };
+  return aliases[normalized] || normalized.slice(0, 30);
 }
 
 function findLabelAmount(lines: string[], label: RegExp): number | undefined {
