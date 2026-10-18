@@ -46,7 +46,6 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
     if ((!isDraft && bill.currentStatus !== BillStatus.CORRECTION_REQUIRED) || bill.createdById !== actor.id) throw new HttpError(409, "Only the bill owner can edit a draft or a bill that needs correction.");
     if (isDraft && intent !== "draft") throw new HttpError(409, "Save the draft before submitting it.");
     if (!isDraft && intent !== "submit") throw new HttpError(409, "A corrected bill must be resubmitted to verification.");
-    if (intent === "submit" && !input.lineItems.length) throw new HttpError(400, "Add at least one material or work item before resubmitting.");
     if (intent === "submit" && !bill.documents.length && !documentKey) throw new HttpError(400, "Please upload the bill document.");
     const duplicate = await db.bill.findFirst({ where: { billNumber: input.billNumber, id: { not: id } } });
     if (duplicate) throw new HttpError(409, duplicate.currentStatus === "PAID" ? "ALREADY PAID – This bill cannot be submitted again." : "BILL ALREADY IN PROCESS");
@@ -54,7 +53,10 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
     if (!vendor?.active) throw new HttpError(400, "Select an active vendor.");
     if (!vendor.gstRegistered && input.gstAmount > 0) throw new HttpError(400, "This vendor is marked non-GST. Set the bill GST amount to ₹0.");
     if (!project || project.status !== "ACTIVE") throw new HttpError(400, "Select an active project.");
-    const lineItemData = input.lineItems.map((item, sortOrder) => {
+    const lineItems = intent === "submit" && !input.lineItems.length
+      ? [{ description: input.workCategory || "Materials / work as described in bill", quantity: 1, unit: "lot", rate: input.billAmount }]
+      : input.lineItems;
+    const lineItemData = lineItems.map((item, sortOrder) => {
       const quantity = new Prisma.Decimal(item.quantity), rate = new Prisma.Decimal(item.rate);
       return { description: item.description, quantity, unit: item.unit, rate, amount: quantity.mul(rate).toDecimalPlaces(2), sortOrder };
     });

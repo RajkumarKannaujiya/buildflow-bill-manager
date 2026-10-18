@@ -221,6 +221,7 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
   const [form, setForm] = useState({ billNumber: "", vendorId: "", projectId: "", vendorContact: "", vendorEmail: "", projectLocation: "", workCategory: "", description: "", billDate: new Date().toISOString().slice(0, 10), billAmount: "", gstAmount: "0", otherCharges: "0", remarks: "" });
   const [lineItems, setLineItems] = useState<BillLineItemDraft[]>([{ description: "", quantity: "1", unit: "nos", rate: "" }]);
   const [autoFilledLineItems, setAutoFilledLineItems] = useState<BillLineItemDraft[] | null>(null), [originalLineItems, setOriginalLineItems] = useState<BillLineItemDraft[] | null>(null);
+  const [lineItemsFallback, setLineItemsFallback] = useState(false);
   const [file, setFile] = useState<File | null>(null), [pending, setPending] = useState(false), [duplicate, setDuplicate] = useState<any>(null), [duplicateLoading, setDuplicateLoading] = useState(false), [error, setError] = useState("");
   const [editedFields, setEditedFields] = useState<Set<string>>(new Set()), [detectedGstin, setDetectedGstin] = useState("");
   const [autoFilledValues, setAutoFilledValues] = useState<AutoBillFields>({}), [autoFilledOriginals, setAutoFilledOriginals] = useState<AutoBillFields>({});
@@ -244,10 +245,12 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
   function changeLineItems(items: BillLineItemDraft[]) {
     setEditedFields((current) => new Set(current).add("lineItems"));
     setLineItems(items);
+    setLineItemsFallback(false);
   }
   function applyInvoiceSuggestions(fields: InvoiceSuggestions) {
     if (!Object.keys(fields).length) {
       setDetectedGstin("");
+      setLineItemsFallback(false);
       if (Object.keys(autoFilledValues).length) setForm((current) => {
         const restored = { ...current };
         for (const [key, value] of Object.entries(autoFilledValues) as Array<[AutoBillField, string]>) {
@@ -284,9 +287,10 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
       setOriginalLineItems((current) => current || lineItems.map((item) => ({ ...item })));
       setAutoFilledLineItems(suggested);
       setLineItems(suggested);
+      setLineItemsFallback(Boolean(fields.lineItemsFallback));
     }
   }
-  async function submit(e: React.FormEvent) { e.preventDefault(); const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null; const intent = submitter?.value === "draft" ? "draft" : "submit"; const enteredItems = lineItems.filter((item) => item.description.trim() || item.rate.trim()); if (enteredItems.some((item) => !item.description.trim() || !item.quantity || Number(item.quantity) <= 0 || !item.unit.trim() || item.rate === "" || Number(item.rate) < 0)) { setError("Complete or remove each material/work row before saving."); return; } if (intent === "submit" && !enteredItems.length) { setError("Add at least one material or work item before submitting."); return; } if (intent === "submit" && !file) { setError("Please upload the bill document."); return; } const savedBillAmount = enteredItems.length ? billLineSubtotal(enteredItems).toFixed(2) : form.billAmount; if (intent === "submit" && Number(savedBillAmount) <= 0) { setError("Material/work items must have a bill amount greater than zero."); return; } setPending(true); setError(""); try { const data = new FormData(); Object.entries({ ...form, billAmount: savedBillAmount, gstAmount }).forEach(([k, v]) => data.append(k, v)); data.append("lineItems", JSON.stringify(enteredItems)); data.append("intent", intent); if (file) data.append("document", file); const result = await api<{ bill: Bill }>("/api/bills", { method: "POST", body: data }); showToast(intent === "draft" ? "Draft saved." : "Bill submitted to Team 2 for verification."); onDone(result.bill.id); } catch (e) { const msg = (e as Error).message; setError(msg); showToast(msg); } finally { setPending(false); } }
+  async function submit(e: React.FormEvent) { e.preventDefault(); const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null; const intent = submitter?.value === "draft" ? "draft" : "submit"; const enteredItems = lineItems.filter((item) => item.description.trim() || item.rate.trim()); if (enteredItems.some((item) => !item.description.trim() || !item.quantity || Number(item.quantity) <= 0 || !item.unit.trim() || item.rate === "" || Number(item.rate) < 0)) { setError("Complete or remove each material/work row before saving."); return; } if (intent === "submit" && !file) { setError("Please upload the bill document."); return; } const savedBillAmount = enteredItems.length ? billLineSubtotal(enteredItems).toFixed(2) : form.billAmount; if (intent === "submit" && Number(savedBillAmount) <= 0) { setError("Enter or scan a bill amount greater than zero."); return; } const submissionItems = intent === "submit" && !enteredItems.length ? [{ description: form.workCategory.trim() || "Materials / work as described in bill", quantity: "1", unit: "lot", rate: savedBillAmount }] : enteredItems; setPending(true); setError(""); try { const data = new FormData(); Object.entries({ ...form, billAmount: savedBillAmount, gstAmount }).forEach(([k, v]) => data.append(k, v)); data.append("lineItems", JSON.stringify(submissionItems)); data.append("intent", intent); if (file) data.append("document", file); const result = await api<{ bill: Bill }>("/api/bills", { method: "POST", body: data }); showToast(intent === "draft" ? "Draft saved." : "Bill submitted to Team 2 for verification."); onDone(result.bill.id); } catch (e) { const msg = (e as Error).message; setError(msg); showToast(msg); } finally { setPending(false); } }
   const alreadyPaid = duplicate?.isPaid;
   return <form className="form-card" onSubmit={submit}>
     {error && <div className="alert error">{error}</div>}
@@ -306,6 +310,7 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
     </div>
     <div className="form-section-title"><span>2</span> Material and work details</div>
     <BillLineItemsEditor items={lineItems} onChange={changeLineItems} />
+    {lineItemsFallback && <div className="alert warning">OCR did not find a clear itemized table, so the scanned bill amount was added as one “lot” row. Edit this row with the actual material/work details when available.</div>}
     <div className="form-section-title"><span>3</span> Bill amount and documents</div>
     <div className="form-grid">
       <Field label="Bill amount / item subtotal (₹) *"><input required type="number" min="0.01" step="0.01" value={billAmount} readOnly={hasStartedItems} onChange={(e) => change("billAmount", e.target.value)} /></Field>

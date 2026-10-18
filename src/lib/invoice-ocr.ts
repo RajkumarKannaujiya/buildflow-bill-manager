@@ -7,6 +7,8 @@ export type InvoiceSuggestions = {
   billAmount?: string;
   gstAmount?: string;
   lineItems?: InvoiceLineItemSuggestion[];
+  /** True when OCR found the total but could not reliably read an itemized table. */
+  lineItemsFallback?: boolean;
 };
 
 export type InvoiceLineItemSuggestion = { description: string; quantity: string; unit: string; rate: string };
@@ -92,7 +94,8 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   const invoiceMatch = invoiceLine?.match(/(?:invoice|bill)\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{1,})/i);
   if (invoiceMatch?.[1]) result.billNumber = invoiceMatch[1].slice(0, 80).toUpperCase();
 
-  const dateLine = lines.find((line) => /(?:invoice|bill|document)\s*date|date\s*of\s*(?:invoice|bill)/i.test(line));
+  const dateLine = lines.find((line) => /(?:invoice|bill|document)\s*date|date\s*of\s*(?:invoice|bill)/i.test(line))
+    || lines.find((line) => /^\s*(?:date|dated)\s*[:#-]/i.test(line));
   const dateMatch = dateLine?.match(/\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b/);
   const parsedDate = dateMatch?.[0] ? normalizeInvoiceDate(dateMatch[0]) : undefined;
   if (parsedDate) result.billDate = parsedDate;
@@ -100,7 +103,7 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   const gstinCandidates = Array.from(joined.matchAll(/\b[0-9A-Z](?:[\s-]?[0-9A-Z]){14}\b/gi))
     .map((match) => match[0].replace(/[^a-z0-9]/gi, "").toUpperCase())
     .filter((value) => value.length === 15);
-  const gstin = gstinCandidates.find((value) => validateGstin(value).valid) || gstinCandidates[0];
+  const gstin = gstinCandidates.find((value) => validateGstin(value).valid);
   if (gstin) result.gstin = gstin;
 
   const taxable = findLabelAmount(lines, /taxable\s+(?:value|amount)|assessable\s+value|sub\s*total|subtotal|amount\s+before\s+tax/i);
@@ -116,12 +119,27 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   if (gst !== undefined && gst >= 0) result.gstAmount = gst.toFixed(2);
   const lineItems = extractInvoiceLineItems(lines);
   if (lineItems.length) result.lineItems = lineItems;
+  else if (billAmount !== undefined && billAmount > 0) {
+    result.lineItems = [{
+      description: "Materials / work from invoice — item details need review",
+      quantity: "1",
+      unit: "lot",
+      rate: billAmount.toFixed(2),
+    }];
+    result.lineItemsFallback = true;
+  }
   return result;
 }
 
 function extractInvoiceLineItems(lines: string[]): InvoiceLineItemSuggestion[] {
   const headerIndex = lines.findIndex((line) => /(?:description|particulars|material|item|product|service|work)\b/i.test(line) && /(?:qty|quantity|rate|unit price|amount|value|total)\b/i.test(line));
-  const tableLines = headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines;
+  const headerLine = headerIndex >= 0 ? lines[headerIndex] : "";
+  // Some PDF text extractors put the column headings and first item on one line.
+  // Start after the final amount column heading so that first item is not lost.
+  const firstRowOnHeader = headerLine ? headerLine.replace(/^.*\b(?:amount|value|total)\b\s*/i, "").trim() : "";
+  const tableLines = headerIndex >= 0
+    ? [...(firstRowOnHeader ? [firstRowOnHeader] : []), ...lines.slice(headerIndex + 1)]
+    : lines;
   const hasHsnColumn = headerIndex >= 0 && /\bhsn\b|\bsac\b/i.test(lines[headerIndex]);
   const result: InvoiceLineItemSuggestion[] = [];
   const seen = new Set<string>();

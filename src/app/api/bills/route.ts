@@ -66,7 +66,6 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof File) || file.size === 0) {
       if (intent === "submit") throw new HttpError(400, "Please upload the bill document.");
     } else await validateDocument(file);
-    if (intent === "submit" && !input.lineItems.length) throw new HttpError(400, "Add at least one material or work item before submitting.");
     const vendor = await db.vendor.findUnique({ where: { id: input.vendorId }, select: { id: true, name: true, gstRegistered: true, active: true } });
     const project = await db.project.findUnique({ where: { id: input.projectId }, select: { id: true, name: true, location: true, status: true } });
     if (!vendor?.active) throw new HttpError(400, "Select an active vendor.");
@@ -86,7 +85,10 @@ export async function POST(request: NextRequest) {
       await sendWorkflowEmail({ to: recipients, subject: `Duplicate / Already Paid Bill Detected - ${input.billNumber}`, heading: paid ? "ALREADY PAID" : "BILL ALREADY IN PROCESS", details: detailRows, actionUrl: `${process.env.APP_URL || request.nextUrl.origin}/bills/${duplicate.id}`, billId: duplicate.id });
       return NextResponse.json({ error: paid ? "ALREADY PAID – This bill cannot be submitted again." : "BILL ALREADY IN PROCESS", duplicate: { ...duplicate, paidAmount: duplicate.payment?.paidAmount.toString(), paymentDate: duplicate.payment?.paymentDate, paymentReference: duplicate.payment?.paymentReference || duplicate.payment?.utrNumber } }, { status: 409 });
     }
-    const lineItemData = input.lineItems.map((item, sortOrder) => {
+    const lineItems = intent === "submit" && !input.lineItems.length
+      ? [{ description: input.workCategory || "Materials / work as described in bill", quantity: 1, unit: "lot", rate: input.billAmount }]
+      : input.lineItems;
+    const lineItemData = lineItems.map((item, sortOrder) => {
       const quantity = new Prisma.Decimal(item.quantity), rate = new Prisma.Decimal(item.rate);
       return { description: item.description, quantity, unit: item.unit, rate, amount: quantity.mul(rate).toDecimalPlaces(2), sortOrder };
     });

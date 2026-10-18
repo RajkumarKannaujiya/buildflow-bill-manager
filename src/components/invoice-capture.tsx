@@ -51,7 +51,7 @@ export function InvoiceCapture({ file, onFile, onExtract }: Props) {
       onExtract(fields);
       setStatus("ready");
       setProgress(100);
-      const count = Object.keys(fields).length;
+      const count = Object.keys(fields).filter((key) => key !== "lineItemsFallback").length;
       setMessage(count ? `${count} field${count === 1 ? "" : "s"} suggested. Review them in the form.` : "Text read, but no bill fields were clear enough to suggest. Fill them in manually.");
     } catch (error) {
       if (currentScan !== scanId.current) return;
@@ -63,7 +63,7 @@ export function InvoiceCapture({ file, onFile, onExtract }: Props) {
   const foundLabels = [
     ["billNumber", "Bill number"], ["billDate", "Bill date"], ["billAmount", "Bill amount"], ["gstAmount", "GST amount"],
   ].filter(([key]) => Boolean(suggestions[key as keyof InvoiceSuggestions]));
-  if (suggestions.lineItems?.length) foundLabels.push(["lineItems", `Material / work · ${suggestions.lineItems.length} rows`]);
+  if (suggestions.lineItems?.length) foundLabels.push(["lineItems", suggestions.lineItemsFallback ? "Material / work · total-only row" : `Material / work · ${suggestions.lineItems.length} rows`]);
 
   return <section className="invoice-capture" aria-label="Smart invoice capture">
     <div className="capture-heading">
@@ -85,6 +85,7 @@ export function InvoiceCapture({ file, onFile, onExtract }: Props) {
     {status === "ready" && foundLabels.length > 0 && <div className="capture-results">
       <div className="capture-results-title"><Sparkles size={13} /><strong>Suggested fields</strong><span>Check each value before submitting</span></div>
       <div className="capture-chips">{foundLabels.map(([key, label]) => <span key={key}>{label}</span>)}</div>
+      {suggestions.lineItemsFallback && <div className="alert warning" style={{ margin: "10px 0 0" }}>The item table was not clear enough to read. The scanned bill amount is ready as one “lot” row so the bill can be submitted; replace it with the actual materials, quantities and rates when possible.</div>}
       {suggestions.gstin && <GstinStatus value={suggestions.gstin} />}
     </div>}
     <p className="capture-footnote">The scan runs on this device; the required document is uploaded only when you save the bill. Review the extracted material rows, quantities, rates, bill total and GSTIN against the original invoice before submitting.</p>
