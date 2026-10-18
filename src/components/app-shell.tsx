@@ -15,7 +15,7 @@ type Branding = { companyName: string; companyLogoUrl: string };
 type Bill = { id: string; billNumber: string; currentStatus: string; totalAmount: string; billDate: string; createdAt: string; vendor: { id: string; name: string }; project: { id: string; name: string; code?: string }; createdBy?: { id: string; name: string }; payment?: { paidAmount: string; utrNumber?: string | null; paymentReference?: string | null; paidBy?: { id: string; name: string } } | null; history?: Array<{ action: string; userId: string; user: { name: string } }> };
 type Project = { id: string; name: string; code: string; location: string; status: string; _count?: { bills: number } };
 type Vendor = { id: string; name: string; companyName?: string; gstin?: string; gstRegistered?: boolean; mobile?: string; email?: string; active: boolean; _count?: { bills: number } };
-type AutoBillField = "billNumber" | "billDate" | "billAmount" | "gstAmount" | "vendorId" | "vendorContact" | "vendorEmail";
+type AutoBillField = "billNumber" | "billDate" | "billAmount" | "gstAmount" | "vendorId" | "vendorContact" | "vendorEmail" | "description";
 type AutoBillFields = Partial<Record<AutoBillField, string>>;
 type Notification = { id: string; title: string; message: string; href?: string; readAt?: string; createdAt: string };
 type Kpis = { totalBills: number; drafts: number; submitted: number; underVerification: number; pendingAdmin: number; approved: number; rejected: number; paymentPending: number; paidBills: number; duplicates: number; totalAmount: string; paidAmount: string; pendingAmount: string; unread: number };
@@ -274,6 +274,7 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
       ...(fields.billAmount && !editedFields.has("billAmount") ? { billAmount: fields.billAmount } : {}),
       ...(fields.gstAmount !== undefined && !editedFields.has("gstAmount") ? { gstAmount: (vendor || selectedVendor) && !vendorHasGst(vendor || selectedVendor) ? "0" : fields.gstAmount } : {}),
       ...(vendor && !editedFields.has("vendorId") ? { vendorId: vendor.id, vendorContact: vendor.mobile || "", vendorEmail: vendor.email || "" } : {}),
+      ...(fields.lineItems?.length && !editedFields.has("description") ? { description: fields.lineItems.map((item) => item.description).join("; ").slice(0, 2000) } : {}),
     };
     setAutoFilledOriginals((current) => {
       const originals = { ...current };
