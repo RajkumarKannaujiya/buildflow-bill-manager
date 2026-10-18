@@ -212,17 +212,29 @@ tbody tr:hover { background:#fbfcfa; }
 .login-art-copy h1 { font:800 42px/1.13 Manrope,sans-serif;letter-spacing:-1.5px;margin:0 0 18px; }
 .login-art-copy p { color:#b8cac2;font-size:13px;line-height:1.7;max-width:370px; }
 .login-foot { position:relative;z-index:1;color:#9fb7ad;font-size:10px; }
-.login-side { display:grid;place-items:center;padding:28px; }
+.login-side { display:grid;place-items:center;padding:28px;overflow-y:auto; }
 .login-card { width:min(390px,100%); }
-.login-card .brand { padding:0 0 42px; }
+.login-card .brand { padding:0 0 28px; }
 .login-card .brand-name { color:var(--green); }
 .login-card h2 { font:800 26px Manrope,sans-serif;letter-spacing:-.8px;margin:0 0 8px; }
 .login-card .intro { color:#82908b;font-size:11px;margin-bottom:25px; }
 .login-card .field { margin-bottom:14px; }
 .login-card .field input { min-height:43px; }
 .login-card .button { width:100%;min-height:43px;margin-top:7px; }
-.demo-accounts { margin-top:22px;padding:13px;background:#f3f7ef;border-radius:9px;color:#67766f;font-size:9px;line-height:1.7; }
+.demo-accounts { margin-top:19px;padding:13px;background:#f3f7ef;border:1px solid #e5eddc;border-radius:10px;color:#67766f;font-size:9px;line-height:1.55; }
 .demo-accounts strong { color:#304b3c; }
+.demo-accounts-head { display:flex;justify-content:space-between;align-items:flex-start;gap:8px; }
+.demo-accounts-head > div { display:grid;gap:4px; }
+.demo-accounts-head > div > span { color:#64766a; }
+.demo-accounts-head code { color:#304b3c;font:700 9px ui-monospace,SFMono-Regular,Consolas,monospace; }
+.demo-badge { padding:4px 6px;border-radius:20px;background:#e5efd9;color:#5e7549;font-size:7px;font-weight:800;letter-spacing:.6px;white-space:nowrap; }
+.demo-warning { margin:9px 0 8px;padding:7px 8px;border-radius:7px;background:#fff9e9;color:#806934;font-size:8px;line-height:1.5; }
+.demo-account-list { display:grid;gap:4px; }
+.demo-account-row { display:flex;align-items:center;gap:8px;padding:6px 7px;border:1px solid #e7ede2;border-radius:7px;background:#fff; }
+.demo-account-copy { display:grid;gap:2px;min-width:0;flex:1; }
+.demo-account-copy strong { color:#3d5145;font-size:8px; }
+.demo-account-copy span { overflow-wrap:anywhere;color:#7c8980;font-size:8px; }
+.demo-account-row .button { width:auto;min-height:25px;margin:0;padding:0 8px;font-size:8px; }
 .toast { position:fixed;right:22px;bottom:22px;z-index:80;background:#163e36;color:white;border-radius:9px;padding:12px 16px;font-size:10px;box-shadow:var(--shadow);max-width:360px; }
 .status-row { display:flex;gap:8px;flex-wrap:wrap; }
 .mini-stat { border:1px solid var(--line);background:#fff;border-radius:9px;padding:12px 14px;flex:1;min-width:100px; }
