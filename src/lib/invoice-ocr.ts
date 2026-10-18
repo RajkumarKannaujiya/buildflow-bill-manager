@@ -12,6 +12,7 @@ export type InvoiceSuggestions = {
 };
 
 export type InvoiceLineItemSuggestion = { description: string; quantity: string; unit: string; rate: string };
+type ParsedInvoiceLineItem = InvoiceLineItemSuggestion & { gstAmount?: string };
 
 export type OcrProgress = (progress: number, message: string) => void;
 
@@ -90,20 +91,29 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   const joined = lines.join("\n");
   const result: InvoiceSuggestions = {};
 
-  const invoiceLine = lines.find((line) => /(?:invoice|bill)\s*(?:number|no\.?|#)\s*[:#-]?\s*[A-Z0-9][A-Z0-9\/-]{1,}/i.test(line));
-  const invoiceMatch = invoiceLine?.match(/(?:invoice|bill)\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{1,})/i);
-  if (invoiceMatch?.[1]) result.billNumber = invoiceMatch[1].slice(0, 80).toUpperCase();
+  const invoiceNumberLine = lines.find((line) => /\binvoice\s*(?:number|no\.?|#)\s*[:#-]?\s*[A-Z0-9][A-Z0-9\/-]{1,}/i.test(line));
+  const invoiceNumber = invoiceNumberLine?.match(/\binvoice\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{1,})/i)?.[1];
+  // OCR may drop "Invoice No." but retain a GST-prefixed invoice number beside "Invoice Date".
+  const invoiceIdLine = lines.find((line) => /\binvoice\s+date\b/i.test(line) && /\bGST[\s-]+\d{3,}[-/]\d{2,}/i.test(line));
+  const inferredInvoiceNumber = invoiceIdLine?.match(/\bGST[\s-]+(\d{3,}[-/]\d{2,}[A-Z0-9]*)/i)?.[1];
+  const billNumberLine = lines.find((line) => /\bbill\s*(?:number|no\.?|#)\s*[:#-]?\s*[A-Z0-9][A-Z0-9\/-]{1,}/i.test(line) && !/\be-?way\s+bill\b/i.test(line));
+  const billNumber = invoiceNumber || (inferredInvoiceNumber ? `GST-${inferredInvoiceNumber}` : billNumberLine?.match(/\bbill\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{1,})/i)?.[1]);
+  if (billNumber) result.billNumber = billNumber.slice(0, 80).toUpperCase();
 
   const dateLine = lines.find((line) => /(?:invoice|bill|document)\s*date|date\s*of\s*(?:invoice|bill)/i.test(line))
     || lines.find((line) => /^\s*(?:date|dated)\s*[:#-]/i.test(line));
-  const dateMatch = dateLine?.match(/\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b/);
+  const dateMatch = dateLine?.match(/\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[-\s][a-z]{3,9}[-,\s]\d{4}|[a-z]{3,9}\s+\d{1,2},?\s+\d{4})\b/i);
   const parsedDate = dateMatch?.[0] ? normalizeInvoiceDate(dateMatch[0]) : undefined;
   if (parsedDate) result.billDate = parsedDate;
 
   const gstinCandidates = Array.from(joined.matchAll(/\b[0-9A-Z](?:[\s-]?[0-9A-Z]){14}\b/gi))
-    .map((match) => match[0].replace(/[^a-z0-9]/gi, "").toUpperCase())
-    .filter((value) => value.length === 15);
-  const gstin = gstinCandidates.find((value) => validateGstin(value).valid);
+    .map((match) => {
+      const start = match.index || 0;
+      const context = joined.slice(Math.max(0, start - 80), start);
+      return { value: match[0].replace(/[^a-z0-9]/gi, "").toUpperCase(), context };
+    })
+    .filter(({ value, context }) => value.length === 15 && !/(?:customer\s+detail|buyer|consignee|bill\s+to|ship\s+to|transport\s+id)\D{0,60}$/i.test(context));
+  const gstin = gstinCandidates.find(({ value }) => validateGstin(value).valid)?.value;
   if (gstin) result.gstin = gstin;
 
   const taxable = findLabelAmount(lines, /taxable\s+(?:value|amount)|assessable\s+value|sub\s*total|subtotal|amount\s+before\s+tax/i);
@@ -114,11 +124,16 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
     if (taxLines.length) gst = taxLines.reduce((sum, line) => sum + (amountFromLine(line) || 0), 0);
   }
   const grandTotal = findLabelAmount(lines, /grand\s+total|total\s+(?:invoice\s+)?(?:amount|value)|amount\s+payable|net\s+payable|invoice\s+value/i);
-  const billAmount = taxable ?? (grandTotal !== undefined && gst !== undefined ? grandTotal - gst : grandTotal);
+  const extractedLineItems = extractInvoiceLineItems(lines);
+  const lineSubtotal = extractedLineItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.rate), 0);
+  const extractedGst = extractedLineItems.reduce((sum, item) => sum + Number(item.gstAmount || 0), 0);
+  if (extractedGst > 0 && (gst === undefined || Math.abs(gst - extractedGst) > 1)) gst = extractedGst;
+  // Itemized taxable values are more reliable than totals that OCR may misread
+  // (for example, ₹4,490 as ₹34,490). Prefer them when a usable table was read.
+  const billAmount = lineSubtotal > 0 ? lineSubtotal : taxable ?? (grandTotal !== undefined && gst !== undefined ? grandTotal - gst : grandTotal);
   if (billAmount !== undefined && billAmount > 0) result.billAmount = billAmount.toFixed(2);
   if (gst !== undefined && gst >= 0) result.gstAmount = gst.toFixed(2);
-  const lineItems = extractInvoiceLineItems(lines);
-  if (lineItems.length) result.lineItems = lineItems;
+  if (extractedLineItems.length) result.lineItems = extractedLineItems.map(({ gstAmount: _gstAmount, ...item }) => item);
   else if (billAmount !== undefined && billAmount > 0) {
     result.lineItems = [{
       description: "Materials / work from invoice — item details need review",
@@ -131,8 +146,8 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   return result;
 }
 
-function extractInvoiceLineItems(lines: string[]): InvoiceLineItemSuggestion[] {
-  const headerIndex = lines.findIndex((line) => /(?:description|particulars|material|item|product|service|work)\b/i.test(line) && /(?:qty|quantity|rate|unit price|amount|value|total)\b/i.test(line));
+function extractInvoiceLineItems(lines: string[]): ParsedInvoiceLineItem[] {
+  const headerIndex = lines.findIndex((line) => /(?:description|particulars|material|item|product|service|work)\b/i.test(line) && /\b(?:qty|quantity)\b/i.test(line) && /\b(?:rate|unit\s+price|amount|value|total)\b/i.test(line));
   const headerLine = headerIndex >= 0 ? lines[headerIndex] : "";
   // Some PDF text extractors put the column headings and first item on one line.
   // Start after the final amount column heading so that first item is not lost.
@@ -141,52 +156,73 @@ function extractInvoiceLineItems(lines: string[]): InvoiceLineItemSuggestion[] {
     ? [...(firstRowOnHeader ? [firstRowOnHeader] : []), ...lines.slice(headerIndex + 1)]
     : lines;
   const hasHsnColumn = headerIndex >= 0 && /\bhsn\b|\bsac\b/i.test(lines[headerIndex]);
-  const result: InvoiceLineItemSuggestion[] = [];
+  const result: ParsedInvoiceLineItem[] = [];
   const seen = new Set<string>();
   for (const line of tableLines) {
     if (/^(?:sub\s*total|subtotal|taxable\s+(?:value|amount)|cgst|sgst|igst|total\s+(?:gst|tax|amount|value)|grand\s+total|amount\s+(?:due|payable)|net\s+payable|round\s*off|balance\s+due|terms\s+and\s+conditions|bank\s+details)\b/i.test(line)) break;
     if (/(?:description|particulars|material|item|product|service|work)\b/i.test(line) && /(?:qty|quantity|rate|unit price|amount|value|hsn|sac)\b/i.test(line)) continue;
+    if (/\b(?:invoice|bill|date|gst|gstin|pan|eway|challan|transport|phone|mobile|address|vendor|supplier|customer|buyer|consignee|bank|ifsc|upi)\b/i.test(line)) continue;
+
+    // OCR often flattens columns and removes the space in values such as "1NOS".
+    const rowLine = line.replace(/(\d)(?=(?:nos?|pcs?|pieces?|bags?|kgs?|kg|gms?|ltr|mtrs?|units?|sets?|rolls?|boxes?|trips?|loads?)\b)/gi, "$1 ");
 
     const numberPattern = /(?<![a-z])(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.(\d{1,3}))?(?![a-z])/gi;
     const tokens: Array<{ value: number; digits: string; decimals: string; start: number; end: number }> = [];
-    for (const match of line.matchAll(numberPattern)) {
+    for (const match of rowLine.matchAll(numberPattern)) {
       const digits = match[1].replace(/,/g, ""), decimals = match[2] || "";
       const value = Number(`${digits}${decimals ? `.${decimals}` : ""}`);
       if (Number.isFinite(value) && value <= 1_000_000_000) tokens.push({ value, digits, decimals, start: match.index || 0, end: (match.index || 0) + match[0].length });
     }
     if (tokens.length < 2) continue;
 
+    const unitRegex = /(?<![a-z])(?:nos?|pieces?|pcs?|sets?|bags?|kg|kgs|gms?|grams?|litres?|liters?|ltr|ltrs|mt|tonnes?|tons?|cft|m3|m\s*[³3]|cum|sq\.?\s*m|sqm|sq\.?\s*ft|sqft|sft|rmt|rft|running\s*(?:ft|feet|m)|feet|ft|metres?|meters?|mtrs?|rolls?|boxes?|trips?|loads?|days?|hours?|hrs?|units?|lot)\b/i;
+    const unitMatch = unitRegex.exec(rowLine);
+    const unitStart = unitMatch?.index ?? -1;
+    const quantityTokenFromUnit = unitMatch ? [...tokens].reverse().find((token) => token.end <= unitStart) : undefined;
+    const afterUnit = unitMatch ? tokens.filter((token) => token.start >= unitStart + unitMatch[0].length) : [];
+
     const ignored = new Set<number>();
     const first = tokens[0];
-    if (tokens.length >= 3 && first.start <= 2 && first.value <= 999 && /^\s*\d{1,3}[.)]?\s+/.test(line)) ignored.add(0);
+    if (tokens.length >= 3 && first.start <= 2 && first.value <= 999 && /^\s*\d{1,3}[.)]?\s+/.test(rowLine)) ignored.add(0);
     if ((hasHsnColumn || tokens.length >= 5) && tokens.length - ignored.size >= 3) {
       const hsnIndex = tokens.findIndex((token, index) => !ignored.has(index) && token.start < tokens[tokens.length - 2].start && !token.decimals && token.digits.length >= 4 && token.digits.length <= 8);
       if (hsnIndex >= 0) ignored.add(hsnIndex);
     }
     const usable = tokens.filter((_, index) => !ignored.has(index));
+    const useUnitLayout = Boolean(unitMatch && quantityTokenFromUnit && afterUnit.length >= 2);
+    if (headerIndex < 0 && !useUnitLayout) continue;
     if (usable.length < 2) continue;
-    const amountToken = usable[usable.length - 1];
-    const hasRate = usable.length >= 3;
-    const quantityToken = usable[usable.length - (hasRate ? 3 : 2)];
-    const rateToken = hasRate ? usable[usable.length - 2] : undefined;
+    const quantityToken = useUnitLayout ? quantityTokenFromUnit! : usable[usable.length - (usable.length >= 3 ? 3 : 2)];
+    const rateToken = useUnitLayout ? afterUnit[0] : usable.length >= 3 ? usable[usable.length - 2] : undefined;
+    const amountToken = useUnitLayout ? afterUnit[1] : usable[usable.length - 1];
     const quantity = quantityToken.value;
     const amount = amountToken.value;
     if (quantity <= 0 || amount <= 0) continue;
 
-    let description = line.slice(0, quantityToken.start).replace(/^\s*\d{1,3}[.)]?\s+/, "").trim();
+    let description = rowLine.slice(0, quantityToken.start).replace(/^\s*\d{1,3}[.)]?\s*[|\[.):\-]?\s*/, "").trim();
+    const previousNumber = [...tokens].reverse().find((token) => token.end <= quantityToken.start);
+    if (useUnitLayout && previousNumber && previousNumber.digits.length >= 4 && previousNumber.digits.length <= 8 && !previousNumber.decimals) {
+      description = `${rowLine.slice(0, previousNumber.start)} ${rowLine.slice(previousNumber.end, quantityToken.start)}`.replace(/^\s*\d{1,3}[.)]?\s*[|\[.):\-]?\s*/, "").trim();
+    }
     for (const index of ignored) {
       const token = tokens[index];
       if (token.start < quantityToken.start && token.digits.length >= 4) description = description.replace(new RegExp(`(?<![a-z])${token.digits}(?![a-z])`, "i"), " ");
     }
-    description = description.replace(/[|:;\-–]+$/g, "").replace(/\s+/g, " ").trim();
-    if (description.length < 3 || !/[a-z]{2}/i.test(description) || /^(?:invoice|bill|date|gstin|pan|email|phone|mobile|address|vendor|supplier|customer|buyer|consignee|ship\s+to|bill\s+to)\b/i.test(description)) continue;
+    description = description.replace(/^[|\[\](){}\s]+|[|\[\](){}\s]+$/g, "").replace(/[|:;\-–]+$/g, "").replace(/\s+/g, " ").trim();
+    if (description.length < 3 || !/[a-z]{2}/i.test(description) || /^(?:invoice|bill|date|gst|gstin|pan|email|phone|mobile|address|vendor|supplier|customer|buyer|consignee|ship\s+to|bill\s+to)\b/i.test(description)) continue;
 
-    const between = line.slice(quantityToken.end, (rateToken || amountToken).start);
-    const unitMatch = between.match(/\b(nos?|pieces?|pcs?|sets?|bags?|kg|kgs|gms?|grams?|litres?|liters?|ltr|ltrs|mt|tonnes?|tons?|cft|m3|m\s*[³3]|cum|sq\.?\s*m|sqm|sq\.?\s*ft|sqft|sft|rmt|rft|running\s*(?:ft|feet|m)|feet|ft|metres?|meters?|mtrs?|rolls?|boxes|box|trips?|loads?|days?|hours?|hrs?|units?|lot)\b/i);
-    if (headerIndex < 0 && !unitMatch && usable.length < 3) continue;
     const unit = normalizeInvoiceUnit(unitMatch?.[0] || "nos");
     const rate = rateToken ? rateToken.value : amount / quantity;
-    const draft = { description: description.slice(0, 500), quantity: quantity.toFixed(Math.min(3, quantityToken.decimals.length)), unit, rate: rate.toFixed(2) };
+    const taxAmountToken = useUnitLayout
+      ? afterUnit.length >= 5 ? afterUnit[3] : afterUnit.length === 4 ? afterUnit[2] : undefined
+      : undefined;
+    const draft: ParsedInvoiceLineItem = {
+      description: description.slice(0, 500),
+      quantity: quantity.toFixed(Math.min(3, quantityToken.decimals.length)),
+      unit,
+      rate: rate.toFixed(2),
+      ...(taxAmountToken && taxAmountToken.value > 0 ? { gstAmount: taxAmountToken.value.toFixed(2) } : {}),
+    };
     const key = `${draft.description.toLowerCase()}|${draft.quantity}|${draft.rate}`;
     if (!seen.has(key)) { result.push(draft); seen.add(key); }
     if (result.length >= 100) break;
@@ -221,6 +257,17 @@ function amountFromLine(line: string, fromEnd = true): number | undefined {
 }
 
 function normalizeInvoiceDate(value: string): string | undefined {
+  const namedMonth = value.match(/^(\d{1,2})[-\s]([a-z]{3,9})[-,\s](\d{4})$/i)
+    || value.match(/^([a-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/i);
+  if (namedMonth) {
+    const day = Number(namedMonth[1].match(/^\d/) ? namedMonth[1] : namedMonth[2]);
+    const monthText = (namedMonth[1].match(/^\d/) ? namedMonth[2] : namedMonth[1]).slice(0, 3).toLowerCase();
+    const year = Number(namedMonth[3]);
+    const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthText) + 1;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (!month || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return undefined;
+    return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
+  }
   const parts = value.split(/[./-]/).map(Number);
   let year: number, month: number, day: number;
   if (parts[0] > 31) [year, month, day] = parts;
