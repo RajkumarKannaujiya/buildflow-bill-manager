@@ -86,7 +86,7 @@ export function parseInvoiceText(text: string): InvoiceSuggestions {
   const parsedDate = dateMatch?.[0] ? normalizeInvoiceDate(dateMatch[0]) : undefined;
   if (parsedDate) result.billDate = parsedDate;
 
-  const gstinCandidates = Array.from(joined.matchAll(/\b[0-9A-Z][0-9A-Z\s-]{12,24}[0-9A-Z]\b/gi))
+  const gstinCandidates = Array.from(joined.matchAll(/\b[0-9A-Z](?:[\s-]?[0-9A-Z]){14}\b/gi))
     .map((match) => match[0].replace(/[^a-z0-9]/gi, "").toUpperCase())
     .filter((value) => value.length === 15);
   const gstin = gstinCandidates.find((value) => validateGstin(value).valid) || gstinCandidates[0];
@@ -110,15 +110,16 @@ function findLabelAmount(lines: string[], label: RegExp): number | undefined {
   for (const line of lines) {
     const match = label.exec(line);
     if (!match) continue;
-    const amount = amountFromLine(line.slice(match.index + match[0].length)) ?? amountFromLine(line);
+    const amount = amountFromLine(line.slice(match.index + match[0].length), false) ?? amountFromLine(line);
     if (amount !== undefined) return amount;
   }
   return undefined;
 }
 
-function amountFromLine(line: string): number | undefined {
-  const matches = Array.from(line.matchAll(/(?:₹|Rs\.?|INR)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.\d{1,2})?|[0-9]+(?:\.\d{1,2})?)/gi));
-  for (const match of matches.reverse()) {
+function amountFromLine(line: string, fromEnd = true): number | undefined {
+  const matches = Array.from(line.matchAll(/(?:₹|Rs\.?|INR)?\s*((?:[0-9]{1,3}(?:,[0-9]{2,3})+|[0-9]+)(?:\.\d{1,2})?)/gi));
+  const candidates = fromEnd ? matches.reverse() : matches;
+  for (const match of candidates) {
     const amount = Number(match[1].replace(/,/g, ""));
     if (Number.isFinite(amount) && amount <= 1_000_000_000) return amount;
   }
