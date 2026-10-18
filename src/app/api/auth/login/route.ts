@@ -5,7 +5,7 @@ import { createSessionToken, setSessionCookie } from "@/lib/auth";
 import { ensureSameOrigin, HttpError, jsonError } from "@/lib/http";
 import { z } from "zod";
 
-const schema = z.object({ email: z.string().email().transform((v) => v.toLowerCase()), password: z.string().min(1).max(200) });
+const schema = z.object({ email: z.string().trim().email().transform((v) => v.toLowerCase()), password: z.string().min(1).max(200) });
 export async function POST(request: NextRequest) {
   try {
     ensureSameOrigin(request);

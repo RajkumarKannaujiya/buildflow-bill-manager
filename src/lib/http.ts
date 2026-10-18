@@ -19,6 +19,13 @@ export function requestIp(request: NextRequest) {
 export function ensureSameOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!origin) return;
-  const expected = process.env.APP_URL || request.nextUrl.origin;
-  if (new URL(origin).origin !== new URL(expected).origin) throw new HttpError(403, "Request origin is not allowed.");
+  let submittedOrigin: string;
+  try { submittedOrigin = new URL(origin).origin; }
+  catch { throw new HttpError(403, "Request origin is not allowed."); }
+  const allowed = new Set<string>([request.nextUrl.origin]);
+  for (const candidate of [process.env.APP_URL, process.env.URL, process.env.DEPLOY_PRIME_URL, process.env.DEPLOY_URL]) {
+    if (!candidate) continue;
+    try { allowed.add(new URL(candidate).origin); } catch { /* Ignore malformed optional deployment URLs. */ }
+  }
+  if (!allowed.has(submittedOrigin)) throw new HttpError(403, "Request origin is not allowed.");
 }
