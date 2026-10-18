@@ -54,6 +54,8 @@ Change or delete demo accounts before using this application with company data. 
 - Every status transition and important action adds status history and audit records. No API route exposes audit edit or delete operations.
 - Emails use professional HTML templates when SMTP is configured. Each attempted recipient is logged in `EmailLog`.
 - Vendor bank details are encrypted with AES-256-GCM before they are stored. Team 1 never receives those fields; only Admin and Team 2 can read them.
+- Bill entry can read PDF text locally or OCR invoice images/scanned PDF pages in the browser and suggest the bill number, date, taxable amount, GST amount, and a matching saved vendor GSTIN. The file is uploaded only when the bill is saved; review every suggested value before submission.
+- GSTIN entry checks its structure and checksum locally and blocks malformed GSTINs when adding a vendor. This does not query GSTN or prove that a registration is active. Use the linked GST Portal search for live checks; a production API integration requires an authorized provider and credentials.
 - The seeded `DUPLICATE_ATTEMPT` event demonstrates a blocked duplicate submission without creating a duplicate bill record.
 
 ## Acceptance walkthrough

@@ -4,11 +4,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BarChart3, BadgeCheck, Bell, Building2, CalendarDays, Check, ChevronDown, ClipboardCheck, Clock3, CreditCard, Download, FileCheck2, FileText, Filter, LayoutDashboard, LogOut, Plus, Receipt, Search, Settings, ShieldCheck, Truck, Users, Wallet, X, ScrollText } from "lucide-react";
+import { GstinStatus } from "@/components/gstin-status";
+import { InvoiceCapture } from "@/components/invoice-capture";
+import type { InvoiceSuggestions } from "@/lib/invoice-ocr";
+import { validateGstin } from "@/lib/gstin";
 
 type User = { id: string; name: string; email: string; role: "TEAM_1" | "TEAM_2" | "ADMIN" };
 type Bill = { id: string; billNumber: string; currentStatus: string; totalAmount: string; billDate: string; createdAt: string; vendor: { id: string; name: string }; project: { id: string; name: string; code?: string }; createdBy?: { id: string; name: string }; payment?: { paidAmount: string; utrNumber?: string | null; paymentReference?: string | null; paidBy?: { id: string; name: string } } | null; history?: Array<{ action: string; userId: string; user: { name: string } }> };
 type Project = { id: string; name: string; code: string; location: string; status: string; _count?: { bills: number } };
 type Vendor = { id: string; name: string; companyName?: string; gstin?: string; mobile?: string; email?: string; active: boolean; _count?: { bills: number } };
+type AutoBillField = "billNumber" | "billDate" | "billAmount" | "gstAmount" | "vendorId" | "vendorContact" | "vendorEmail";
+type AutoBillFields = Partial<Record<AutoBillField, string>>;
 type Notification = { id: string; title: string; message: string; href?: string; readAt?: string; createdAt: string };
 type Kpis = { totalBills: number; drafts: number; submitted: number; underVerification: number; pendingAdmin: number; approved: number; rejected: number; paymentPending: number; paidBills: number; duplicates: number; totalAmount: string; paidAmount: string; pendingAmount: string; unread: number };
 type SettingsData = { companyName: string; companyLogoUrl: string; supportEmail: string; currency: string; billNumberFormat: string; gstEnabled: boolean; notificationsEnabled: boolean };
@@ -199,11 +205,53 @@ function stageLabel(status: string) { if (["SUBMITTED", "TEAM_2_REVIEW"].include
 function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { projects: Project[]; vendors: Vendor[]; user: User; showToast: (m: string) => void; onDone: (id: string) => void; onCancel: () => void }) {
   const [form, setForm] = useState({ billNumber: "", vendorId: "", projectId: "", vendorContact: "", vendorEmail: "", projectLocation: "", workCategory: "", description: "", billDate: new Date().toISOString().slice(0, 10), billAmount: "", gstAmount: "0", otherCharges: "0", remarks: "" });
   const [file, setFile] = useState<File | null>(null), [pending, setPending] = useState(false), [duplicate, setDuplicate] = useState<any>(null), [duplicateLoading, setDuplicateLoading] = useState(false), [error, setError] = useState("");
+  const [editedFields, setEditedFields] = useState<Set<string>>(new Set()), [detectedGstin, setDetectedGstin] = useState("");
+  const [autoFilledValues, setAutoFilledValues] = useState<AutoBillFields>({}), [autoFilledOriginals, setAutoFilledOriginals] = useState<AutoBillFields>({});
   const selectedVendor = vendors.find((v) => v.id === form.vendorId), selectedProject = projects.find((p) => p.id === form.projectId);
+  const matchedInvoiceVendor = detectedGstin && validateGstin(detectedGstin).valid ? vendors.find((v) => v.active && v.gstin?.replace(/[^a-z0-9]/gi, "").toUpperCase() === detectedGstin) : undefined;
   const total = Number(form.billAmount || 0) + Number(form.gstAmount || 0) + Number(form.otherCharges || 0);
   useEffect(() => { api<{ billNumber: string }>("/api/bills/next-number").then((r) => setForm((current) => current.billNumber ? current : { ...current, billNumber: r.billNumber })).catch(() => undefined); }, []);
   useEffect(() => { if (!form.billNumber.trim()) { setDuplicate(null); return; } const timer = setTimeout(() => { setDuplicateLoading(true); const q = new URLSearchParams({ billNumber: form.billNumber, ...(form.vendorId ? { vendorId: form.vendorId } : {}), ...(form.projectId ? { projectId: form.projectId } : {}) }); api<{ duplicate: any }>(`/api/bills/check-duplicate?${q}`).then((r) => setDuplicate(r.duplicate)).catch(() => undefined).finally(() => setDuplicateLoading(false)); }, 300); return () => clearTimeout(timer); }, [form.billNumber, form.vendorId, form.projectId]);
-  function change(key: string, value: string) { setForm((v) => ({ ...v, [key]: value })); if (key === "vendorId") { const vendor = vendors.find((item) => item.id === value); setForm((v) => ({ ...v, vendorId: value, vendorContact: vendor?.mobile || "", vendorEmail: vendor?.email || "" })); } if (key === "projectId") { const project = projects.find((item) => item.id === value); setForm((v) => ({ ...v, projectId: value, projectLocation: project?.location || "" })); } }
+  function change(key: string, value: string) {
+    setEditedFields((current) => new Set(current).add(key));
+    setForm((current) => ({
+      ...current, [key]: value,
+      ...(key === "vendorId" ? { vendorContact: vendors.find((item) => item.id === value)?.mobile || "", vendorEmail: vendors.find((item) => item.id === value)?.email || "" } : {}),
+      ...(key === "projectId" ? { projectLocation: projects.find((item) => item.id === value)?.location || "" } : {}),
+    }));
+  }
+  function applyInvoiceSuggestions(fields: InvoiceSuggestions) {
+    if (!Object.keys(fields).length) {
+      setDetectedGstin("");
+      if (Object.keys(autoFilledValues).length) setForm((current) => {
+        const restored = { ...current };
+        for (const [key, value] of Object.entries(autoFilledValues) as Array<[AutoBillField, string]>) {
+          if (!editedFields.has(key) && current[key] === value) restored[key] = autoFilledOriginals[key] || "";
+        }
+        return restored;
+      });
+      setAutoFilledValues({});
+      setAutoFilledOriginals({});
+      return;
+    }
+    setDetectedGstin(fields.gstin || "");
+    const validGstin = fields.gstin && validateGstin(fields.gstin).valid ? fields.gstin : "";
+    const vendor = validGstin ? vendors.find((item) => item.active && item.gstin?.replace(/[^a-z0-9]/gi, "").toUpperCase() === validGstin) : undefined;
+    const values: AutoBillFields = {
+      ...(fields.billNumber && !editedFields.has("billNumber") ? { billNumber: fields.billNumber } : {}),
+      ...(fields.billDate && !editedFields.has("billDate") ? { billDate: fields.billDate } : {}),
+      ...(fields.billAmount && !editedFields.has("billAmount") ? { billAmount: fields.billAmount } : {}),
+      ...(fields.gstAmount !== undefined && !editedFields.has("gstAmount") ? { gstAmount: fields.gstAmount } : {}),
+      ...(vendor && !editedFields.has("vendorId") ? { vendorId: vendor.id, vendorContact: vendor.mobile || "", vendorEmail: vendor.email || "" } : {}),
+    };
+    setAutoFilledOriginals((current) => {
+      const originals = { ...current };
+      for (const key of Object.keys(values) as AutoBillField[]) if (originals[key] === undefined) originals[key] = form[key];
+      return originals;
+    });
+    setAutoFilledValues((current) => ({ ...current, ...values }));
+    setForm((current) => ({ ...current, ...values }));
+  }
   async function submit(e: React.FormEvent) { e.preventDefault(); const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null; const intent = submitter?.value === "draft" ? "draft" : "submit"; if (intent === "submit" && !file) { setError("Please upload the bill document."); return; } setPending(true); setError(""); try { const data = new FormData(); Object.entries(form).forEach(([k, v]) => data.append(k, v)); data.append("intent", intent); if (file) data.append("document", file); const result = await api<{ bill: Bill }>("/api/bills", { method: "POST", body: data }); showToast(intent === "draft" ? "Draft saved." : "Bill submitted to Team 2 for verification."); onDone(result.bill.id); } catch (e) { const msg = (e as Error).message; setError(msg); showToast(msg); } finally { setPending(false); } }
   const alreadyPaid = duplicate?.isPaid;
   return <form className="form-card" onSubmit={submit}>
@@ -215,7 +263,7 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
       <Field label="Bill number *"><input required value={form.billNumber} onChange={(e) => change("billNumber", e.target.value)} placeholder="e.g. BL-2026-0042" /></Field>
       <Field label="Project *"><select required value={form.projectId} onChange={(e) => change("projectId", e.target.value)}><option value="">Select project</option>{projects.filter((p) => p.status === "ACTIVE").map((p) => <option key={p.id} value={p.id}>{p.name} · {p.code}</option>)}</select></Field>
       <Field label="Bill date *"><input required type="date" value={form.billDate} onChange={(e) => change("billDate", e.target.value)} /></Field>
-      <Field label="Vendor / contractor *"><select required value={form.vendorId} onChange={(e) => change("vendorId", e.target.value)}><option value="">Select vendor</option>{vendors.filter((v) => v.active).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
+      <Field label="Vendor / contractor *"><select required value={form.vendorId} onChange={(e) => change("vendorId", e.target.value)}><option value="">Select vendor</option>{vendors.filter((v) => v.active).map((v) => <option key={v.id} value={v.id}>{v.name}{v.gstin ? ` · ${v.gstin}` : ""}</option>)}</select>{selectedVendor?.gstin && <GstinStatus value={selectedVendor.gstin} />}</Field>
       <Field label="Project location"><input value={form.projectLocation} onChange={(e) => change("projectLocation", e.target.value)} placeholder="Site location" /></Field>
       <Field label="Work / material category"><input value={form.workCategory} onChange={(e) => change("workCategory", e.target.value)} placeholder="Civil, electrical, materials…" /></Field>
       <Field label="Vendor contact number"><input value={form.vendorContact} onChange={(e) => change("vendorContact", e.target.value)} /></Field>
@@ -227,9 +275,10 @@ function NewBill({ projects, vendors, user, showToast, onDone, onCancel }: { pro
       <Field label="Bill amount (₹) *"><input required type="number" min="0.01" step="0.01" value={form.billAmount} onChange={(e) => change("billAmount", e.target.value)} /></Field>
       <Field label="GST amount (₹)"><input type="number" min="0" step="0.01" value={form.gstAmount} onChange={(e) => change("gstAmount", e.target.value)} /></Field>
       <Field label="Other charges (₹)"><input type="number" min="0" step="0.01" value={form.otherCharges} onChange={(e) => change("otherCharges", e.target.value)} /></Field>
-      <div className="field full"><label>Bill PDF or image {file ? "" : "(required to submit)"}</label><input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => setFile(e.target.files?.[0] || null)} /><span className="field-hint">PDF, JPG, PNG or WEBP · up to 10 MB. Files are stored privately.</span></div>
       <Field label="Remarks" className="full"><textarea value={form.remarks} onChange={(e) => change("remarks", e.target.value)} placeholder="Additional information for the verification team" /></Field>
     </div>
+    {detectedGstin && validateGstin(detectedGstin).valid && (!matchedInvoiceVendor || selectedVendor?.id !== matchedInvoiceVendor.id) && <div className="alert warning"><strong>Confirm the invoice supplier.</strong> The invoice GSTIN {detectedGstin} {matchedInvoiceVendor ? `matches ${matchedInvoiceVendor.name}, but another vendor is selected` : "does not match an active vendor in your directory"}. Check the vendor before submitting.</div>}
+    <InvoiceCapture file={file} onFile={setFile} onExtract={applyInvoiceSuggestions} />
     <div className="total-box"><span>Total bill amount · {selectedVendor?.name || "Vendor"} · {selectedProject?.name || "Project"}</span><strong>{money(total)}</strong></div>
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, marginTop: 17 }}><button type="button" className="button" onClick={onCancel}>Cancel</button><button type="submit" name="intent" value="draft" className="button" disabled={pending || (duplicate && alreadyPaid)}>{pending ? "Saving…" : "Save draft"}</button><button type="submit" name="intent" value="submit" className="button primary" disabled={pending || (duplicate && alreadyPaid)}><FileCheck2 size={14} />{pending ? "Submitting…" : "Submit bill"}</button></div>
   </form>;
@@ -244,10 +293,10 @@ function ProjectsView({ projects, user, showToast, refresh }: { projects: Projec
 }
 
 function VendorsView({ vendors, user, showToast, refresh }: { vendors: Vendor[]; user: User; showToast: (m: string) => void; refresh: () => void }) {
-  const [open, setOpen] = useState(false), [pending, setPending] = useState(false);
-  async function submit(e: React.FormEvent<HTMLFormElement>) { e.preventDefault(); setPending(true); const form = Object.fromEntries(new FormData(e.currentTarget).entries()); try { await api("/api/vendors", { method: "POST", body: JSON.stringify({ ...form, active: true }) }); showToast("Vendor added."); setOpen(false); refresh(); } catch (err) { showToast((err as Error).message); } finally { setPending(false); } }
+  const [open, setOpen] = useState(false), [pending, setPending] = useState(false), [gstinValue, setGstinValue] = useState("");
+  async function submit(e: React.FormEvent<HTMLFormElement>) { e.preventDefault(); const normalizedGstin = gstinValue.trim().toUpperCase(); if (normalizedGstin && !validateGstin(normalizedGstin).valid) { showToast(validateGstin(normalizedGstin).message); return; } setPending(true); const form = Object.fromEntries(new FormData(e.currentTarget).entries()); try { await api("/api/vendors", { method: "POST", body: JSON.stringify({ ...form, gstin: normalizedGstin, active: true }) }); showToast("Vendor added."); setOpen(false); setGstinValue(""); refresh(); } catch (err) { showToast((err as Error).message); } finally { setPending(false); } }
   async function toggleVendor(v: Vendor) { try { await api(`/api/vendors/${v.id}`, { method: "PATCH", body: JSON.stringify({ active: !v.active }) }); showToast("Vendor status updated."); refresh(); } catch (err) { showToast((err as Error).message); } }
-  return <><section className="panel table-panel"><div className="panel-head"><div><h2 className="panel-title">Vendor directory</h2><p className="panel-caption">Bank details are restricted to authorized roles.</p></div><div className="spacer" />{user.role !== "TEAM_1" && <button className="button primary" onClick={() => setOpen(true)}><Plus /> Add vendor</button>}</div><div className="table-wrap"><table><thead><tr><th>Vendor</th><th>GSTIN</th><th>Contact</th><th>Email</th><th>Bills</th><th>Status</th>{user.role !== "TEAM_1" && <th />}</tr></thead><tbody>{vendors.map((v) => <tr key={v.id}><td><span className="vendor-name">{v.name}</span><span className="sub-cell">{v.companyName || "Contractor / supplier"}</span></td><td>{v.gstin || "—"}</td><td>{v.mobile || "—"}</td><td>{v.email || "—"}</td><td>{v._count?.bills || 0}</td><td><span className={`status ${v.active ? "paid" : "neutral"}`}>{v.active ? "Active" : "Inactive"}</span></td>{user.role !== "TEAM_1" && <td><button className="button small" onClick={() => void toggleVendor(v)}>{v.active ? "Deactivate" : "Activate"}</button></td>}</tr>)}</tbody></table>{!vendors.length && <div className="empty">No vendors found.</div>}</div></section>{open && <Modal title="Add a vendor" close={() => setOpen(false)}><form onSubmit={submit} className="stack"><Field label="Vendor name *"><input name="name" required /></Field><Field label="Company name"><input name="companyName" /></Field><div className="form-grid" style={{ marginBottom: 0 }}><Field label="GSTIN"><input name="gstin" /></Field><Field label="PAN"><input name="pan" /></Field><Field label="Mobile"><input name="mobile" /></Field><Field label="Email"><input name="email" type="email" /></Field></div><Field label="Address"><textarea name="address" /></Field><Field label="Bank details (restricted)"><textarea name="bankDetails" /></Field><div style={{ display: "flex", justifyContent: "flex-end" }}><button className="button primary" disabled={pending}>Add vendor</button></div></form></Modal>}</>;
+  return <><section className="panel table-panel"><div className="panel-head"><div><h2 className="panel-title">Vendor directory</h2><p className="panel-caption">Bank details are restricted to authorized roles.</p></div><div className="spacer" />{user.role !== "TEAM_1" && <button className="button primary" onClick={() => { setGstinValue(""); setOpen(true); }}><Plus /> Add vendor</button>}</div><div className="table-wrap"><table><thead><tr><th>Vendor</th><th>GSTIN</th><th>Contact</th><th>Email</th><th>Bills</th><th>Status</th>{user.role !== "TEAM_1" && <th />}</tr></thead><tbody>{vendors.map((v) => <tr key={v.id}><td><span className="vendor-name">{v.name}</span><span className="sub-cell">{v.companyName || "Contractor / supplier"}</span></td><td>{v.gstin || "—"}</td><td>{v.mobile || "—"}</td><td>{v.email || "—"}</td><td>{v._count?.bills || 0}</td><td><span className={`status ${v.active ? "paid" : "neutral"}`}>{v.active ? "Active" : "Inactive"}</span></td>{user.role !== "TEAM_1" && <td><button className="button small" onClick={() => void toggleVendor(v)}>{v.active ? "Deactivate" : "Activate"}</button></td>}</tr>)}</tbody></table>{!vendors.length && <div className="empty">No vendors found.</div>}</div></section>{open && <Modal title="Add a vendor" close={() => { setOpen(false); setGstinValue(""); }}><form onSubmit={submit} className="stack"><Field label="Vendor name *"><input name="name" required /></Field><Field label="Company name"><input name="companyName" /></Field><div className="form-grid" style={{ marginBottom: 0 }}><Field label="GSTIN"><input name="gstin" value={gstinValue} onChange={(event) => setGstinValue(event.target.value.toUpperCase())} autoComplete="off" /><GstinStatus value={gstinValue} /></Field><Field label="PAN"><input name="pan" /></Field><Field label="Mobile"><input name="mobile" /></Field><Field label="Email"><input name="email" type="email" /></Field></div><Field label="Address"><textarea name="address" /></Field><Field label="Bank details (restricted)"><textarea name="bankDetails" /></Field><div style={{ display: "flex", justifyContent: "flex-end" }}><button className="button primary" disabled={pending}>Add vendor</button></div></form></Modal>}</>;
 }
 
 function ReportsView({ projects }: { projects: Project[] }) {
