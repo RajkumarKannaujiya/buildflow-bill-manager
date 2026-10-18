@@ -20,7 +20,7 @@ async function main() {
   const vendors = [];
   for (let i = 0; i < vendorNames.length; i++) {
     const name = vendorNames[i], existing = await db.vendor.findFirst({ where: { name } });
-    vendors.push(existing ? await db.vendor.update({ where: { id: existing.id }, data: { active: true } }) : await db.vendor.create({ data: { name, companyName: `${name} Pvt Ltd`, gstin: `29AABCU${String(1000 + i)}K1Z${i % 9}`, mobile: `+91 98${String(70000000 + i).slice(-8)}`, email: `accounts${i + 1}@vendor.buildflow.local`, address: `${15 + i} Industrial Estate, Bengaluru`, active: true } }));
+    vendors.push(existing ? await db.vendor.update({ where: { id: existing.id }, data: { active: true, gstRegistered: true } }) : await db.vendor.create({ data: { name, companyName: `${name} Pvt Ltd`, gstRegistered: true, gstin: `29AABCU${String(1000 + i)}K1Z${i % 9}`, mobile: `+91 98${String(70000000 + i).slice(-8)}`, email: `accounts${i + 1}@vendor.buildflow.local`, address: `${15 + i} Industrial Estate, Bengaluru`, active: true } }));
   }
 
   const statuses: BillStatus[] = [BillStatus.SUBMITTED, BillStatus.SUBMITTED, BillStatus.TEAM_2_REVIEW, BillStatus.TEAM_2_REVIEW, BillStatus.ADMIN_PENDING, BillStatus.ADMIN_PENDING, BillStatus.PAYMENT_PENDING, BillStatus.PAYMENT_PENDING, BillStatus.PAID, BillStatus.PAID, BillStatus.PAID, BillStatus.PAID, BillStatus.ADMIN_REJECTED, BillStatus.ADMIN_REJECTED, BillStatus.CORRECTION_REQUIRED, BillStatus.CORRECTION_REQUIRED, BillStatus.DRAFT, BillStatus.CANCELLED, BillStatus.SUBMITTED, BillStatus.PAID];

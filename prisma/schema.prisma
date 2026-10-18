@@ -52,6 +52,7 @@ model User {
   notifications Notification[]
   auditLogs    AuditLog[]
   statusEvents BillStatusHistory[]
+  deletedBills Bill[]   @relation("BillDeletedBy")
 }
 
 model Project {
@@ -72,6 +73,7 @@ model Vendor {
   name        String
   companyName String?
   gstin       String?
+  gstRegistered Boolean @default(false)
   pan         String?
   mobile      String?
   email       String?
@@ -101,11 +103,16 @@ model Bill {
   remarks              String?
   currentStatus        BillStatus @default(DRAFT)
   createdById          String
+  deletedAt            DateTime?
+  deletedById          String?
+  deleteReason         String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
   vendor               Vendor   @relation(fields: [vendorId], references: [id], onDelete: Restrict)
   project              Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   createdBy            User     @relation("BillCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  deletedBy            User?    @relation("BillDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  lineItems            BillLineItem[]
   documents            BillDocument[]
   payment              Payment?
   history              BillStatusHistory[]
@@ -114,6 +121,21 @@ model Bill {
   @@unique([vendorId, billNumber, projectId], name: "vendor_bill_project_unique")
   @@index([currentStatus, createdAt])
   @@index([projectId, vendorId])
+  @@index([deletedAt, createdAt])
+}
+
+model BillLineItem {
+  id          String   @id @default(cuid())
+  billId      String
+  description String
+  quantity    Decimal  @db.Decimal(14, 3)
+  unit        String
+  rate        Decimal  @db.Decimal(14, 2)
+  amount      Decimal  @db.Decimal(14, 2)
+  sortOrder   Int      @default(0)
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@index([billId, sortOrder])
 }
 
 model BillDocument {

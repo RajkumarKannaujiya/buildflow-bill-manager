@@ -16,7 +16,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const actor = await requireRole(roles, request);
     const payload = await request.json().catch(() => ({})) as { remarks?: string; reason?: string };
     const remarks = String(payload.reason || payload.remarks || "").trim();
-    const bill = await db.bill.findUnique({ where: { id }, include: { vendor: true, project: true, createdBy: true, payment: true, documents: true } });
+    const bill = await db.bill.findFirst({ where: { id, deletedAt: null }, include: { vendor: true, project: true, createdBy: true, payment: true, documents: true } });
     if (!bill) throw new HttpError(404, "Bill not found.");
     if (bill.currentStatus === BillStatus.PAID || bill.payment) throw new HttpError(409, "PAYMENT ALREADY COMPLETED");
 
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     } else throw new HttpError(404, "Unknown bill action.");
 
     await db.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<Array<{ currentStatus: BillStatus }>>`SELECT "currentStatus" FROM "Bill" WHERE id = ${id} FOR UPDATE`;
+      const locked = await tx.$queryRaw<Array<{ currentStatus: BillStatus }>>`SELECT "currentStatus" FROM "Bill" WHERE id = ${id} AND "deletedAt" IS NULL FOR UPDATE`;
       if (!locked.length || locked[0].currentStatus !== bill.currentStatus) throw new HttpError(409, "The bill changed while you were working. Refresh and try again.");
       if (action === "approve") {
         const intermediate = { id, currentStatus: BillStatus.ADMIN_PENDING };

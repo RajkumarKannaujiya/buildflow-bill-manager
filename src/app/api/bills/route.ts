@@ -10,8 +10,8 @@ import { billInput } from "@/lib/validation";
 import { recordAudit, changeStatus } from "@/lib/audit";
 
 const include = {
-  vendor: { select: { id: true, name: true, companyName: true, gstin: true, mobile: true, email: true } },
-  project: true, createdBy: { select: { id: true, name: true, email: true, role: true } }, documents: true,
+  vendor: { select: { id: true, name: true, companyName: true, gstin: true, gstRegistered: true, mobile: true, email: true } },
+  project: true, createdBy: { select: { id: true, name: true, email: true, role: true } }, documents: true, lineItems: { orderBy: { sortOrder: "asc" as const } },
   payment: { include: { paidBy: { select: { id: true, name: true } } } },
   history: { include: { user: { select: { name: true, role: true } } }, orderBy: { createdAt: "asc" as const } },
 };
@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
     const paidById = q.get("paidById") || undefined;
     const from = q.get("from"), to = q.get("to"), min = q.get("minAmount"), max = q.get("maxAmount");
     const where: Prisma.BillWhereInput = {
+      deletedAt: null,
       ...(status && Object.values(BillStatus).includes(status) ? { currentStatus: status } : {}),
       ...(projectId ? { projectId } : {}), ...(vendorId ? { vendorId } : {}),
       ...(submittedById ? { createdById: submittedById } : {}),
@@ -65,9 +66,11 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof File) || file.size === 0) {
       if (intent === "submit") throw new HttpError(400, "Please upload the bill document.");
     } else await validateDocument(file);
-    const vendor = await db.vendor.findUnique({ where: { id: input.vendorId }, select: { id: true, name: true, active: true } });
+    if (intent === "submit" && !input.lineItems.length) throw new HttpError(400, "Add at least one material or work item before submitting.");
+    const vendor = await db.vendor.findUnique({ where: { id: input.vendorId }, select: { id: true, name: true, gstRegistered: true, active: true } });
     const project = await db.project.findUnique({ where: { id: input.projectId }, select: { id: true, name: true, location: true, status: true } });
     if (!vendor?.active) throw new HttpError(400, "Select an active vendor.");
+    if (!vendor.gstRegistered && input.gstAmount > 0) throw new HttpError(400, "This vendor is marked non-GST. Set the bill GST amount to ₹0.");
     if (!project || project.status !== "ACTIVE") throw new HttpError(400, "Select an active project.");
     const exact = await db.bill.findFirst({ where: { vendorId: vendor.id, billNumber: input.billNumber, projectId: project.id }, include: { payment: { include: { paidBy: true } }, vendor: true, project: true } });
     const global = exact ? null : await db.bill.findFirst({ where: { billNumber: input.billNumber }, include: { payment: { include: { paidBy: true } }, vendor: true, project: true } });
@@ -83,6 +86,12 @@ export async function POST(request: NextRequest) {
       await sendWorkflowEmail({ to: recipients, subject: `Duplicate / Already Paid Bill Detected - ${input.billNumber}`, heading: paid ? "ALREADY PAID" : "BILL ALREADY IN PROCESS", details: detailRows, actionUrl: `${process.env.APP_URL || request.nextUrl.origin}/bills/${duplicate.id}`, billId: duplicate.id });
       return NextResponse.json({ error: paid ? "ALREADY PAID – This bill cannot be submitted again." : "BILL ALREADY IN PROCESS", duplicate: { ...duplicate, paidAmount: duplicate.payment?.paidAmount.toString(), paymentDate: duplicate.payment?.paymentDate, paymentReference: duplicate.payment?.paymentReference || duplicate.payment?.utrNumber } }, { status: 409 });
     }
+    const lineItemData = input.lineItems.map((item, sortOrder) => {
+      const quantity = new Prisma.Decimal(item.quantity), rate = new Prisma.Decimal(item.rate);
+      return { description: item.description, quantity, unit: item.unit, rate, amount: quantity.mul(rate).toDecimalPlaces(2), sortOrder };
+    });
+    const lineSubtotal = lineItemData.reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+    if (lineItemData.length && lineSubtotal.comparedTo(input.billAmount) !== 0) throw new HttpError(400, "Bill amount must match the material/work item subtotal.");
     const total = new Prisma.Decimal(input.billAmount).plus(input.gstAmount).plus(input.otherCharges);
     if (file instanceof File && file.size > 0) savedKey = await savePrivateFile(file, "bill");
     const bill = await db.$transaction(async (tx) => {
@@ -92,6 +101,7 @@ export async function POST(request: NextRequest) {
         otherCharges: input.otherCharges, totalAmount: total, vendorContact: input.vendorContact, vendorEmail: input.vendorEmail || undefined,
         projectLocation: input.projectLocation || project.location, workCategory: input.workCategory, remarks: input.remarks,
         currentStatus: BillStatus.DRAFT, createdById: actor.id,
+        ...(lineItemData.length ? { lineItems: { create: lineItemData } } : {}),
         ...(savedKey && file instanceof File ? { documents: { create: { storageKey: savedKey, originalName: file.name.slice(0, 250), mimeType: file.type, sizeBytes: file.size } } } : {}),
       } });
       await recordAudit(tx, { actor, billId: created.id, action: "BILL_CREATED", next: BillStatus.DRAFT, remarks: input.remarks, ipAddress: requestIp(request) });

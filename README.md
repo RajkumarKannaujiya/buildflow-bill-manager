@@ -47,9 +47,11 @@ Change or delete demo accounts before using this application with company data. 
 
 ## Workflow and controls
 
-- Team 1 creates and submits a bill with a required PDF/image. Exact vendor + bill number + project matches and bill number collisions are blocked; paid bills display payment details.
+- Team 1 creates and submits a bill with a required PDF/image and an itemized material/work breakdown (description, quantity, unit, and rate). The bill amount must match the line-item subtotal.
+- Vendors can be explicitly marked GST-registered or non-GST. A non-GST vendor does not need a GSTIN and its bill GST amount must be zero. GSTIN format/checksum validation is local; it does not verify active registration with GSTN.
 - Team 2 verifies or returns a bill. Only an Admin can approve or reject; rejection requires a reason.
 - Admin approval moves the bill through `ADMIN_APPROVED` to `PAYMENT_PENDING`. Team 2 alone can record payment.
+- Team 2 and Admin can remove an unpaid bill from active lists with a required reason. This is an audited soft delete; the record is retained. Paid bills cannot be deleted so payment reconciliation remains intact.
 - Payment locks the bill row inside a serializable database transaction and uses a unique payment per bill. A second attempt is blocked by the persisted paid status, payment row and unique constraint. The payment amount must equal the approved total.
 - Every status transition and important action adds status history and audit records. No API route exposes audit edit or delete operations.
 - Emails use professional HTML templates when SMTP is configured. Each attempted recipient is logged in `EmailLog`.

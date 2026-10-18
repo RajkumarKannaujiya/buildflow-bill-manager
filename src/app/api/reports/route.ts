@@ -6,13 +6,15 @@ import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { jsonError } from "@/lib/http";
 
-const columns = ["Bill No", "Vendor", "Project", "Bill Date", "Status", "Bill Amount", "GST", "Other Charges", "Total Amount", "Payment Date", "Paid Amount", "Payment Method", "UTR", "Payment Reference", "Paid By"];
+const columns = ["Bill No", "Vendor", "Project", "Bill Date", "Status", "Work Description", "Material Breakdown", "Bill Amount", "GST", "Other Charges", "Total Amount", "Payment Date", "Paid Amount", "Payment Method", "UTR", "Payment Reference", "Paid By"];
 export async function GET(request: NextRequest) {
   try {
     await requireRole([Role.ADMIN, Role.TEAM_2], request);
     const p = request.nextUrl.searchParams, format = p.get("format") || "json", projectId = p.get("projectId") || undefined;
-    const bills = await db.bill.findMany({ where: projectId ? { projectId } : {}, include: { vendor: true, project: true, payment: { include: { paidBy: true } } }, orderBy: { createdAt: "desc" } });
-    const rows = bills.map((b) => [b.billNumber, b.vendor.name, b.project.name, b.billDate.toLocaleDateString("en-IN"), b.currentStatus,
+    const scope = { deletedAt: null, ...(projectId ? { projectId } : {}) };
+    const bills = await db.bill.findMany({ where: scope, include: { vendor: true, project: true, lineItems: { orderBy: { sortOrder: "asc" } }, payment: { include: { paidBy: true } } }, orderBy: { createdAt: "desc" } });
+    const rows = bills.map((b) => [b.billNumber, b.vendor.name, b.project.name, b.billDate.toLocaleDateString("en-IN"), b.currentStatus, b.description,
+      b.lineItems.map((item) => `${item.description} (${item.quantity} ${item.unit} × ₹${item.rate} = ₹${item.amount})`).join("; "),
       b.billAmount.toString(), b.gstAmount.toString(), b.otherCharges.toString(), b.totalAmount.toString(), b.payment?.paymentDate.toLocaleDateString("en-IN") || "",
       b.payment?.paidAmount.toString() || "", b.payment?.paymentMethod || "", b.payment?.utrNumber || "", b.payment?.paymentReference || "", b.payment?.paidBy.name || ""]);
     if (format === "csv") {
@@ -31,9 +33,8 @@ export async function GET(request: NextRequest) {
       const buffer = await buildPdf(rows);
       return new NextResponse(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": "attachment; filename=buildflow-bill-report.pdf" } });
     }
-    const scope = projectId ? { projectId } : {};
     const [groups, total, paid, pending] = await Promise.all([db.bill.groupBy({ by: ["currentStatus"], where: scope, _count: { _all: true }, _sum: { totalAmount: true } }),
-      db.bill.aggregate({ where: scope, _sum: { totalAmount: true } }), db.payment.aggregate({ where: projectId ? { bill: { projectId } } : {}, _sum: { paidAmount: true } }),
+      db.bill.aggregate({ where: scope, _sum: { totalAmount: true } }), db.payment.aggregate({ where: { bill: { is: scope } }, _sum: { paidAmount: true } }),
       db.bill.aggregate({ where: { ...scope, currentStatus: { notIn: ["PAID", "ADMIN_REJECTED", "CANCELLED", "DUPLICATE"] } }, _sum: { totalAmount: true } })]);
     const projectSummary = new Map<string, { name: string; count: number; total: number; approved: number; paid: number; pending: number }>();
     const vendorSummary = new Map<string, { name: string; count: number; total: number; paid: number }>();
@@ -64,9 +65,9 @@ async function buildPdf(rows: Array<Array<string>>) {
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk)); doc.on("end", () => resolve(Buffer.concat(chunks))); doc.on("error", reject);
     doc.fontSize(18).fillColor("#17443d").text("BuildFlow · Bill report"); doc.moveDown(0.4).fontSize(8).fillColor("#64748b").text(`Generated ${new Date().toLocaleString("en-IN")} · ${rows.length} bills`); doc.moveDown();
-    const visible = [0, 1, 2, 3, 4, 8, 9, 10, 11, 12];
+    const visible = [0, 1, 2, 3, 4, 5, 10, 11, 12, 14];
     const headers = visible.map((i) => columns[i]);
-    const widths = [64, 92, 116, 64, 78, 72, 64, 74, 70, 72];
+    const widths = [56, 78, 96, 54, 60, 136, 66, 58, 64, 62];
     const drawHeader = () => { const y = doc.y; let x = 32; doc.rect(32, y, widths.reduce((a, b) => a + b, 0), 24).fill("#17443d"); headers.forEach((h, i) => { doc.fillColor("white").fontSize(7).text(h, x + 4, y + 8, { width: widths[i] - 8, ellipsis: true }); x += widths[i]; }); doc.y = y + 28; };
     drawHeader();
     rows.forEach((row, index) => {

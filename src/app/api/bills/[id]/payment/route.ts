@@ -23,9 +23,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const proof = form.get("paymentProof");
     if (proof instanceof File && proof.size > 0) { await validateDocument(proof); proofKey = await savePrivateFile(proof, "payment"); }
     const paidBill = await db.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<Array<{ id: string; currentStatus: BillStatus }>>`SELECT id, "currentStatus" FROM "Bill" WHERE id = ${id} FOR UPDATE`;
+      const locked = await tx.$queryRaw<Array<{ id: string; currentStatus: BillStatus }>>`SELECT id, "currentStatus" FROM "Bill" WHERE id = ${id} AND "deletedAt" IS NULL FOR UPDATE`;
       if (!locked.length) throw new HttpError(404, "Bill not found.");
-      const bill = await tx.bill.findUnique({ where: { id }, include: { vendor: true, project: true, payment: true, createdBy: true } });
+      const bill = await tx.bill.findFirst({ where: { id, deletedAt: null }, include: { vendor: true, project: true, payment: true, createdBy: true } });
       if (!bill) throw new HttpError(404, "Bill not found.");
       if (bill.currentStatus === BillStatus.PAID || bill.payment) throw new HttpError(409, "PAYMENT ALREADY COMPLETED");
       if (bill.currentStatus !== BillStatus.PAYMENT_PENDING) throw new HttpError(409, "Payment cannot be made until Admin approval.");

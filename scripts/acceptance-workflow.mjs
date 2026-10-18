@@ -39,6 +39,7 @@ async function main() {
 
   const form = new FormData();
   Object.entries({ billNumber: "BILL-1001", vendorId: vendor.id, projectId: project.id, vendorContact: vendor.mobile || "", vendorEmail: vendor.email || "", projectLocation: project.location, workCategory: "Acceptance workflow", description: "End-to-end workflow verification", billDate: new Date().toISOString().slice(0, 10), billAmount: "10000.00", gstAmount: "1800.00", otherCharges: "0", remarks: "Automated acceptance scenario", intent: "submit" }).forEach(([k, v]) => form.append(k, v));
+  form.append("lineItems", JSON.stringify([{ description: "Acceptance test material", quantity: "1", unit: "lot", rate: "10000.00" }]));
   form.append("document", new Blob(["%PDF-1.4\nAcceptance test document\n%%EOF\n"], { type: "application/pdf" }), "acceptance.pdf");
   const { bill } = await request("/api/bills", { cookie: team1.cookie, method: "POST", body: form, expectedStatus: 201 });
   console.log("1–4: Team 1 submitted BILL-1001.");
@@ -67,6 +68,7 @@ async function main() {
 
   const duplicate = new FormData();
   Object.entries({ billNumber: "BILL-1001", vendorId: vendor.id, projectId: project.id, vendorContact: vendor.mobile || "", vendorEmail: vendor.email || "", projectLocation: project.location, workCategory: "Acceptance workflow", description: "Duplicate attempt", billDate: new Date().toISOString().slice(0, 10), billAmount: "10000.00", gstAmount: "1800.00", otherCharges: "0", remarks: "Must be blocked", intent: "submit" }).forEach(([k, v]) => duplicate.append(k, v));
+  duplicate.append("lineItems", JSON.stringify([{ description: "Acceptance test material", quantity: "1", unit: "lot", rate: "10000.00" }]));
   duplicate.append("document", new Blob(["%PDF-1.4\nAcceptance test duplicate\n%%EOF\n"], { type: "application/pdf" }), "duplicate.pdf");
   const blocked = await request("/api/bills", { cookie: team1.cookie, method: "POST", body: duplicate, expectedStatus: 409 });
   assert(blocked.error?.includes("ALREADY PAID"), "A second submission was not identified as already paid.");

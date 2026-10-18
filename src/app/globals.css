@@ -156,6 +156,23 @@ tbody tr:hover { background:#fbfcfa; }
 .form-section-title { font:700 12px Manrope,sans-serif;margin:5px 0 14px;display:flex;align-items:center;gap:9px; }
 .form-section-title span { width:22px;height:22px;display:grid;place-items:center;background:#eef5e7;color:#557739;border-radius:7px;font-size:10px; }
 .form-grid { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px 14px;margin-bottom:22px; }
+.bill-items-editor { margin:0 0 20px;padding:14px;border:1px solid #e1e9e3;border-radius:10px;background:#fbfcfa; }
+.bill-items-head { display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px; }
+.bill-items-head > div { display:grid;gap:4px; }
+.bill-items-head strong { color:#30443a;font-size:10px; }
+.bill-items-head span,.bill-items-note { color:#82908a;font-size:9px;line-height:1.5; }
+.bill-items-head .button { width:auto;margin:0;flex-shrink:0; }
+.bill-items-scroll { width:100%;overflow-x:auto; }
+.bill-item-labels,.bill-item-row { min-width:690px;display:grid;grid-template-columns:minmax(180px,2fr) minmax(80px,.7fr) minmax(85px,.7fr) minmax(100px,.9fr) minmax(100px,.9fr) 32px;gap:7px;align-items:center; }
+.bill-item-labels { padding:0 6px 6px;color:#82908a;font-size:8px;font-weight:700; }
+.bill-item-row { margin-top:6px; }
+.bill-item-row input { width:100%;min-width:0;height:33px;padding:6px 8px;border:1px solid #e0e8e3;border-radius:7px;background:#fff;color:#293b35;font:10px 'DM Sans',Arial,sans-serif;outline:0; }
+.bill-item-row input:focus { border-color:#97b4a4;box-shadow:0 0 0 3px #dfece4; }
+.bill-item-amount { padding:0 4px;color:#304b3c;font-size:9px;text-align:right; }
+.bill-item-remove { width:30px;height:30px; }
+.bill-item-remove:disabled { opacity:.35;cursor:not-allowed; }
+.bill-items-note { margin:10px 0 0; }
+.bill-items-note strong { color:#304b3c; }
 .field { display:flex;flex-direction:column;gap:6px;min-width:0; }
 .field.span2 { grid-column:span 2; }
 .field.full { grid-column:1 / -1; }
